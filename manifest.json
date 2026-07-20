@@ -1,7 +1,7 @@
 {
   "id": "ace2x-knowledge-os",
   "name": "ACE2X Knowledge OS",
-  "version": "0.4.12",
+  "version": "0.5.0",
   "minAppVersion": "1.5.0",
   "description": "Knowledge synchronization for decisions, risks, issues, executive follow-ups, people and a native Obsidian Bases dashboard.",
   "author": "Christopher Aceto",
