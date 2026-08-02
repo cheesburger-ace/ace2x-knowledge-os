@@ -1809,11 +1809,11 @@ var ACE2XKnowledgeOSSettingTab = class extends import_obsidian2.PluginSettingTab
     head.createEl("th", { text: "Example" });
     const body = table.createEl("tbody");
     const rows = [
-      ["d::", "Decision", "d:: [[John Doe|JD]] approved the proposal."],
-      ["r::", "Risk", "r:: Vendor delays may impact the schedule. [[John Doe]]"],
-      ["i::", "Issue", "i:: Reporting currently requires administrator access."],
-      ["e::", "Executive follow-up", "e:: Confirm FY27 funding with [[John Doe]]."],
-      ["a::", "Action (delegated to someone else)", "a:: Confirm pricing with the vendor. [[John Doe]]"],
+      ["d::", "Decision", "d:: [[John Doe|JD]] approved the proposal.", "d"],
+      ["r::", "Risk", "r:: Vendor delays may impact the schedule. [[John Doe]]", "r"],
+      ["i::", "Issue", "i:: Reporting currently requires administrator access.", "i"],
+      ["e::", "Executive follow-up", "e:: Confirm FY27 funding with [[John Doe]].", "e"],
+      ["a::", "Action (delegated to someone else)", "a:: Confirm pricing with the vendor. [[John Doe]]", "a"],
       ["[[Name]]", "Person reference", "[[John Doe]] or an alias such as [[JD]]"],
       ["- [ ]", "Your task", "- [ ] Review licensing \u{1F4C5} 2026-07-31"],
       ["#Topic", "Tag", "#Infrastructure or #IAM"],
@@ -1823,11 +1823,13 @@ var ACE2XKnowledgeOSSettingTab = class extends import_obsidian2.PluginSettingTab
     ];
     for (const row of rows) {
       const tr = body.createEl("tr");
-      tr.createEl("td").createEl("code", { text: row[0] });
+      const codeEl = tr.createEl("td").createEl("code", { text: row[0] });
+      if (row[3]) codeEl.addClass(`aceto-type-marker-${row[3]}`);
       tr.createEl("td", { text: row[1] });
       tr.createEl("td").createEl("code", { text: row[2] });
     }
     const notes = reference.createEl("div", { cls: "aceto-reference-notes" });
+    notes.createEl("p", { text: "The d:: r:: i:: e:: a:: markers above are shown with the same colors used to highlight them inline in your notes, in both edit mode and reading view." });
     notes.createEl("p", { text: "Aliases are resolved by Obsidian. A link such as [[JD]] resolves to the person page whose aliases include JD." });
     notes.createEl("p", { text: "Only links resolving to a person page are synchronized to People pages. A person page is recognized by its location in the People folder or by type: person in frontmatter." });
     notes.createEl("p", { text: "Use s:: inline at the end of a record. Write s::o for Open and s::d for Done. The aliases s::c, done, closed, and complete are accepted and normalized. Base status edits synchronize back to the compact inline value." });
