@@ -31,6 +31,21 @@
 .aceto-mm-counter.is-clickable { cursor: pointer; }
 .aceto-mm-counter.is-clickable:hover { background: var(--background-modifier-hover); }
 .aceto-mm-line-highlight { background-color: rgba(255, 214, 0, 0.35); transition: background-color 0.3s ease; }
+
+.aceto-type-marker-a,
+.aceto-type-marker-r,
+.aceto-type-marker-i,
+.aceto-type-marker-d,
+.aceto-type-marker-e {
+  border-radius: 3px;
+  padding: 0 2px;
+  font-weight: 600;
+}
+.aceto-type-marker-a { background-color: rgba(158, 158, 158, 0.3); }
+.aceto-type-marker-r { background-color: rgba(233, 30, 99, 0.28); }
+.aceto-type-marker-i { background-color: rgba(255, 214, 0, 0.32); }
+.aceto-type-marker-d { background-color: rgba(76, 175, 80, 0.3); }
+.aceto-type-marker-e { background-color: rgba(33, 150, 243, 0.28); }
 .aceto-mm-open-items-search { width: 100%; box-sizing: border-box; margin-bottom: 0.5rem; }
 .aceto-mm-open-item { display: flex; align-items: center; gap: 0.5rem; padding: 0.3rem 0; border-bottom: 1px solid var(--background-modifier-border); }
 .aceto-mm-open-item-text { flex: 1; cursor: pointer; }

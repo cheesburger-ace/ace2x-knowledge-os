@@ -12,6 +12,8 @@ import {
 } from "obsidian";
 import { MeetingModeView, VIEW_TYPE_MEETING_MODE } from "./meetingMode/view";
 import { highlightLinesField } from "./meetingMode/highlightExtension";
+import { recordMarkerColors, recordMarkerHighlightPlugin } from "./meetingMode/markerColorExtension";
+import { highlightRecordMarkersInElement } from "./meetingMode/markerReadingViewProcessor";
 
 const DEFAULT_SETTINGS = {
   peopleFolder: "98.Knowledge/People",
@@ -282,6 +284,11 @@ export default class ACE2XKnowledgeOSPlugin extends Plugin {
 
     this.registerView(VIEW_TYPE_MEETING_MODE, (leaf) => new MeetingModeView(leaf, this));
     this.registerEditorExtension(highlightLinesField);
+    this.registerEditorExtension([
+      recordMarkerColors.of(Object.keys(RECORD_TYPES).map((key) => ({ type: key, className: `aceto-type-marker-${key}` }))),
+      recordMarkerHighlightPlugin
+    ]);
+    this.registerMarkdownPostProcessor((el) => highlightRecordMarkersInElement(el, this.recordTypeKeys()));
     this.addRibbonIcon("target", "Toggle Meeting Mode panel", () => this.toggleMeetingModeView());
     this.addCommand({ id: "start-executive-meeting-mode", name: "Start Executive Meeting Mode", callback: () => this.activateMeetingModeView() });
     this.addCommand({ id: "stop-executive-meeting-mode", name: "Stop Executive Meeting Mode", callback: () => this.deactivateMeetingModeView() });

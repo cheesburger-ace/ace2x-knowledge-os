@@ -370,6 +370,92 @@ var MeetingModeView = class extends import_obsidian.ItemView {
   }
 };
 
+// src/meetingMode/markerColorExtension.ts
+var import_state2 = require("@codemirror/state");
+var import_view2 = require("@codemirror/view");
+var recordMarkerColors = import_state2.Facet.define({
+  combine: (values) => values[0] || []
+});
+function buildDecorations(view) {
+  const colors = view.state.facet(recordMarkerColors);
+  if (!colors.length) return import_view2.Decoration.none;
+  const byType = new Map(colors.map((c) => [c.type, c.className]));
+  const pattern = new RegExp(`^(\\s*(?:[-*+]\\s*)?)(${colors.map((c) => c.type).join("|")})(::)`, "i");
+  const builder = new import_state2.RangeSetBuilder();
+  for (const { from, to } of view.visibleRanges) {
+    let pos = from;
+    while (pos <= to) {
+      const line = view.state.doc.lineAt(pos);
+      const match = line.text.match(pattern);
+      if (match) {
+        const type = match[2].toLowerCase();
+        const className = byType.get(type);
+        if (className) {
+          const startOffset = line.from + match[1].length;
+          const endOffset = startOffset + match[2].length + match[3].length;
+          builder.add(startOffset, endOffset, import_view2.Decoration.mark({ class: className }));
+        }
+      }
+      if (line.to >= view.state.doc.length) break;
+      pos = line.to + 1;
+    }
+  }
+  return builder.finish();
+}
+var recordMarkerHighlightPlugin = import_view2.ViewPlugin.fromClass(
+  class {
+    constructor(view) {
+      this.decorations = buildDecorations(view);
+    }
+    update(update) {
+      if (update.docChanged || update.viewportChanged) {
+        this.decorations = buildDecorations(update.view);
+      }
+    }
+  },
+  { decorations: (v) => v.decorations }
+);
+
+// src/meetingMode/markerReadingViewProcessor.ts
+function highlightRecordMarkersInElement(el, typeKeys) {
+  var _a;
+  if (!typeKeys.length) return;
+  const pattern = new RegExp(`^(\\s*)(${typeKeys.join("|")})(::)`, "i");
+  const containers = [];
+  if ((_a = el.matches) == null ? void 0 : _a.call(el, "p, li")) containers.push(el);
+  containers.push(...Array.from(el.querySelectorAll("p, li")));
+  for (const container of containers) {
+    let atLineStart = true;
+    for (const node of Array.from(container.childNodes)) {
+      if (node.nodeType === Node.ELEMENT_NODE && node.tagName === "BR") {
+        atLineStart = true;
+        continue;
+      }
+      if (!atLineStart) continue;
+      atLineStart = false;
+      if (node.nodeType !== Node.TEXT_NODE) continue;
+      const text = node.textContent || "";
+      const match = text.match(pattern);
+      if (!match) continue;
+      const type = match[2].toLowerCase();
+      const leadLen = match[1].length;
+      const markerLen = match[2].length + match[3].length;
+      const before = text.slice(0, leadLen);
+      const marker = text.slice(leadLen, leadLen + markerLen);
+      const after = text.slice(leadLen + markerLen);
+      const span = document.createElement("span");
+      span.className = `aceto-type-marker-${type}`;
+      span.textContent = marker;
+      const parent = node.parentNode;
+      if (!parent) continue;
+      parent.insertBefore(document.createTextNode(before), node);
+      parent.insertBefore(span, node);
+      parent.insertBefore(document.createTextNode(after), node);
+      parent.removeChild(node);
+    }
+  }
+}
+
 // src/main.ts
 var DEFAULT_SETTINGS = {
   peopleFolder: "98.Knowledge/People",
@@ -610,6 +696,11 @@ var ACE2XKnowledgeOSPlugin = class extends import_obsidian2.Plugin {
     }));
     this.registerView(VIEW_TYPE_MEETING_MODE, (leaf) => new MeetingModeView(leaf, this));
     this.registerEditorExtension(highlightLinesField);
+    this.registerEditorExtension([
+      recordMarkerColors.of(Object.keys(RECORD_TYPES).map((key) => ({ type: key, className: `aceto-type-marker-${key}` }))),
+      recordMarkerHighlightPlugin
+    ]);
+    this.registerMarkdownPostProcessor((el) => highlightRecordMarkersInElement(el, this.recordTypeKeys()));
     this.addRibbonIcon("target", "Toggle Meeting Mode panel", () => this.toggleMeetingModeView());
     this.addCommand({ id: "start-executive-meeting-mode", name: "Start Executive Meeting Mode", callback: () => this.activateMeetingModeView() });
     this.addCommand({ id: "stop-executive-meeting-mode", name: "Stop Executive Meeting Mode", callback: () => this.deactivateMeetingModeView() });
