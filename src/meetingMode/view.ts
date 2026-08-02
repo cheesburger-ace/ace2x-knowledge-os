@@ -28,6 +28,7 @@ export interface MeetingModePlugin {
   recordTypeKeyForTypeName(typeName: string): string | null;
   findSourceLineNumber(content: string, typeKey: string | null, sentence: string): number;
   findAllSourceLineNumbers(content: string, typeKey: string | null): number[];
+  personFilePaths(): string[];
 }
 
 interface OpenItemRow {
@@ -53,10 +54,13 @@ export class MeetingModeView extends ItemView {
   ownerSectionEl!: HTMLElement;
   captureInputEl!: HTMLInputElement;
   countersEl!: HTMLElement;
+  personSearchEl!: HTMLInputElement;
+  openItemsScopeEl!: HTMLElement;
   openItemsSearchEl!: HTMLInputElement;
   openItemsEl!: HTMLElement;
   activeSourceFile: TFile | null = null;
   currentOwner: PersonEntry | null = null;
+  personSearchOwner: PersonEntry | null = null;
   highlightClearTimer: number | null = null;
 
   constructor(leaf: WorkspaceLeaf, plugin: MeetingModePlugin) {
@@ -105,9 +109,33 @@ export class MeetingModeView extends ItemView {
 
     const openItemsSection = container.createDiv({ cls: "aceto-mm-open-items" });
     openItemsSection.createEl("div", { cls: "aceto-mm-section-label", text: "Open Items" });
+
+    this.personSearchEl = openItemsSection.createEl("input", {
+      cls: "aceto-mm-open-items-search",
+      attr: { type: "text", placeholder: "Search by person (all open items, vault-wide)...", list: "aceto-mm-person-datalist" }
+    });
+    const datalist = openItemsSection.createEl("datalist", { attr: { id: "aceto-mm-person-datalist" } });
+    for (const path of this.plugin.personFilePaths()) {
+      datalist.createEl("option", { attr: { value: path.split("/").pop()?.replace(/\.md$/i, "") || path } });
+    }
+    this.personSearchEl.addEventListener("input", () => {
+      const value = this.personSearchEl.value.trim();
+      this.personSearchOwner = value ? this.resolvePersonByName(value) : null;
+      this.renderOpenItems();
+    });
+
+    const scopeRow = openItemsSection.createDiv({ cls: "aceto-mm-open-items-scope" });
+    this.openItemsScopeEl = scopeRow.createEl("span");
+    const clearButton = scopeRow.createEl("button", { cls: "aceto-mm-clear-person-search", text: "Clear" });
+    clearButton.addEventListener("click", () => {
+      this.personSearchEl.value = "";
+      this.personSearchOwner = null;
+      this.renderOpenItems();
+    });
+
     this.openItemsSearchEl = openItemsSection.createEl("input", {
       cls: "aceto-mm-open-items-search",
-      attr: { type: "text", placeholder: "Search open items..." }
+      attr: { type: "text", placeholder: "Filter by text..." }
     });
     this.openItemsSearchEl.addEventListener("input", () => this.renderOpenItems());
     this.openItemsEl = openItemsSection.createDiv({ cls: "aceto-mm-open-items-list" });
@@ -259,6 +287,27 @@ export class MeetingModeView extends ItemView {
     return this.frontmatterLinksToPeople(file, fm?.owner)[0] || null;
   }
 
+  personEntryFromPath(path: string): PersonEntry | null {
+    const file = this.app.vault.getAbstractFileByPath(path);
+    if (!(file instanceof TFile)) return null;
+    return {
+      path: file.path,
+      basename: file.basename,
+      display: file.basename,
+      canonicalLink: `[[${file.path.replace(/\.md$/i, "")}|${file.basename}]]`
+    };
+  }
+
+  resolvePersonByName(name: string): PersonEntry | null {
+    const target = name.trim().toLowerCase();
+    if (!target) return null;
+    for (const path of this.plugin.personFilePaths()) {
+      const basename = (path.split("/").pop() || path).replace(/\.md$/i, "");
+      if (basename.toLowerCase() === target) return this.personEntryFromPath(path);
+    }
+    return null;
+  }
+
   refreshOwner(): void {
     this.ownerSectionEl.empty();
     this.ownerSectionEl.createEl("div", { cls: "aceto-mm-section-label", text: "Owner" });
@@ -309,6 +358,7 @@ export class MeetingModeView extends ItemView {
   }
 
   queryOpenItems(): OpenItemRow[] {
+    const effectiveOwner = this.personSearchOwner || this.currentOwner;
     const folders = this.plugin.recordFolderPaths();
     const rows: OpenItemRow[] = [];
     for (const file of this.app.vault.getMarkdownFiles()) {
@@ -316,9 +366,9 @@ export class MeetingModeView extends ItemView {
       const fm = this.app.metadataCache.getFileCache(file)?.frontmatter;
       if (!fm || !fm.record_id || !fm.source_path) continue;
       if (String(fm.status || "").toLowerCase() === "done") continue;
-      if (this.currentOwner) {
+      if (effectiveOwner) {
         const ownerPaths = this.frontmatterLinksToPeople(file, fm.owner).map((p) => p.path);
-        if (!ownerPaths.includes(this.currentOwner.path)) continue;
+        if (!ownerPaths.includes(effectiveOwner.path)) continue;
       }
       rows.push({
         file,
@@ -334,6 +384,18 @@ export class MeetingModeView extends ItemView {
   renderOpenItems(): void {
     if (!this.openItemsEl) return;
     this.openItemsEl.empty();
+
+    if (this.personSearchOwner) {
+      this.openItemsScopeEl.setText(`Vault-wide open items for ${this.personSearchOwner.basename}`);
+      this.openItemsScopeEl.parentElement?.addClass("is-active");
+    } else if (this.currentOwner) {
+      this.openItemsScopeEl.setText(`Open items for ${this.currentOwner.basename}`);
+      this.openItemsScopeEl.parentElement?.removeClass("is-active");
+    } else {
+      this.openItemsScopeEl.setText("All open items (vault-wide)");
+      this.openItemsScopeEl.parentElement?.removeClass("is-active");
+    }
+
     const query = this.openItemsSearchEl.value.trim().toLowerCase();
     const rows = this.queryOpenItems().filter((row) => !query || row.sentence.toLowerCase().includes(query));
 
@@ -342,13 +404,38 @@ export class MeetingModeView extends ItemView {
       return;
     }
 
-    for (const row of rows) {
-      const rowEl = this.openItemsEl.createDiv({ cls: "aceto-mm-open-item" });
-      const checkbox = rowEl.createEl("input", { attr: { type: "checkbox" } });
-      checkbox.addEventListener("change", () => void this.completeOpenItem(row));
-      const text = rowEl.createEl("span", { cls: "aceto-mm-open-item-text", text: row.sentence });
-      text.addEventListener("click", () => void this.openSourceForItem(row));
+    if (this.personSearchOwner) {
+      this.renderOpenItemsGroupedByType(rows);
+    } else {
+      for (const row of rows) this.renderOpenItemRow(this.openItemsEl, row);
     }
+  }
+
+  renderOpenItemsGroupedByType(rows: OpenItemRow[]): void {
+    const labels = this.plugin.recordTypeLabels();
+    const byType = new Map<string, OpenItemRow[]>();
+    for (const row of rows) {
+      const key = this.plugin.recordTypeKeyForTypeName(row.type) || row.type;
+      if (!byType.has(key)) byType.set(key, []);
+      byType.get(key)!.push(row);
+    }
+    for (const typeKey of this.plugin.recordTypeKeys()) {
+      const group = byType.get(typeKey);
+      if (!group || !group.length) continue;
+      this.openItemsEl.createEl("div", {
+        cls: `aceto-mm-open-items-group-label aceto-type-marker-${typeKey}`,
+        text: `${labels[typeKey] || typeKey} (${group.length})`
+      });
+      for (const row of group) this.renderOpenItemRow(this.openItemsEl, row);
+    }
+  }
+
+  renderOpenItemRow(container: HTMLElement, row: OpenItemRow): void {
+    const rowEl = container.createDiv({ cls: "aceto-mm-open-item" });
+    const checkbox = rowEl.createEl("input", { attr: { type: "checkbox" } });
+    checkbox.addEventListener("change", () => void this.completeOpenItem(row));
+    const text = rowEl.createEl("span", { cls: "aceto-mm-open-item-text", text: row.sentence });
+    text.addEventListener("click", () => void this.openSourceForItem(row));
   }
 
   async completeOpenItem(row: OpenItemRow): Promise<void> {
