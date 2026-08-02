@@ -10,6 +10,8 @@ import {
   normalizePath,
   debounce
 } from "obsidian";
+import { MeetingModeView, VIEW_TYPE_MEETING_MODE } from "./meetingMode/view";
+import { highlightLinesField } from "./meetingMode/highlightExtension";
 
 const DEFAULT_SETTINGS = {
   peopleFolder: "98.Knowledge/People",
@@ -18,21 +20,36 @@ const DEFAULT_SETTINGS = {
   decisionsFolder: "16. ⚖️ Decisions",
   risksFolder: "17. ⚠️ Risks",
   issuesFolder: "18. 🚧 Issues",
+  actionsFolder: "19. ✅ Actions",
   dashboardFolder: "01.Home/Dashboards",
   dashboardBaseName: "00.🎛️ Master",
   autoSync: false,
   autoCreatePeople: false,
   debounceMs: 1800,
   excludedFolders: ["99.System/Templates"],
-  excludedHeadings: ["links", "backlinks", "references", "related", "carry forward", "same day"]
+  excludedHeadings: ["links", "backlinks", "references", "related", "carry forward", "same day"],
+  autoLinkTypes: { project: "project", program: "program", capability: "capability", meeting: "meeting" },
+  priorityEnabled: false,
+  priorityLevels: ["None", "Low", "Medium", "High"],
+  yourPersonNote: "",
+  meetingModeAutoOpen: false,
+  meetingModeRememberOwner: true,
+  meetingModeRememberCategory: true,
+  meetingModeShowCounters: true,
+  meetingModeFocusAfterSave: true,
+  lastOwnerPath: "",
+  lastCapturePrefix: ""
 };
 
-const RECORD_TYPES = {
+export const RECORD_TYPES = {
   d: { key: "decisions", singular: "Decision", heading: "Decisions", typeName: "decision", folderSetting: "decisionsFolder" },
   r: { key: "risks", singular: "Risk", heading: "Risks", typeName: "risk", folderSetting: "risksFolder" },
   i: { key: "issues", singular: "Issue", heading: "Issues", typeName: "issue", folderSetting: "issuesFolder" },
-  e: { key: "executive_follow_ups", singular: "Executive Follow-up", heading: "Executive Follow-ups", typeName: "executive-follow-up", folderSetting: "executiveFolder" }
+  e: { key: "executive_follow_ups", singular: "Executive Follow-up", heading: "Executive Follow-ups", typeName: "executive-follow-up", folderSetting: "executiveFolder" },
+  a: { key: "actions", singular: "Action", heading: "Actions", typeName: "action", folderSetting: "actionsFolder" }
 };
+
+const RECORD_TYPE_PATTERN = Object.keys(RECORD_TYPES).join("|");
 
 
 const REQUIRED_PLUGINS = [
@@ -99,6 +116,7 @@ class MetadataPreviewModal extends Modal {
     this.renderSection(contentEl, "Risks", this.analysis.records.filter((x) => x.type === "r").map((x) => x.displayText));
     this.renderSection(contentEl, "Issues", this.analysis.records.filter((x) => x.type === "i").map((x) => x.displayText));
     this.renderSection(contentEl, "Executive Follow-ups", this.analysis.records.filter((x) => x.type === "e").map((x) => x.displayText));
+    this.renderSection(contentEl, "Actions", this.analysis.records.filter((x) => x.type === "a").map((x) => x.displayText));
 
     const changes = [
       `Source metadata: ${this.analysis.sourceWillChange ? "will update" : "no indexed change"}`,
@@ -168,9 +186,10 @@ class BatchPreviewModal extends Modal {
       a.risks += x.records.filter((r) => r.type === "r").length;
       a.issues += x.records.filter((r) => r.type === "i").length;
       a.executive += x.records.filter((r) => r.type === "e").length;
+      a.actions += x.records.filter((r) => r.type === "a").length;
       a.unresolved += x.unresolvedLinks.length;
       return a;
-    }, { tags: 0, people: 0, decisions: 0, risks: 0, issues: 0, executive: 0, unresolved: 0 });
+    }, { tags: 0, people: 0, decisions: 0, risks: 0, issues: 0, executive: 0, actions: 0, unresolved: 0 });
 
     const list = contentEl.createEl("ul");
     list.createEl("li", { text: `Notes: ${this.analyses.length}` });
@@ -179,6 +198,7 @@ class BatchPreviewModal extends Modal {
     list.createEl("li", { text: `Risks: ${totals.risks}` });
     list.createEl("li", { text: `Issues: ${totals.issues}` });
     list.createEl("li", { text: `Executive follow-ups: ${totals.executive}` });
+    list.createEl("li", { text: `Actions: ${totals.actions}` });
     list.createEl("li", { text: `Tags: ${totals.tags}` });
     if (totals.unresolved) list.createEl("li", { text: `Unresolved links: ${totals.unresolved}` });
 
@@ -260,12 +280,59 @@ export default class ACE2XKnowledgeOSPlugin extends Plugin {
       if (this.settings.autoSync && this.shouldProcess(file)) this.syncDebounced(file);
     }));
 
+    this.registerView(VIEW_TYPE_MEETING_MODE, (leaf) => new MeetingModeView(leaf, this));
+    this.registerEditorExtension(highlightLinesField);
+    this.addRibbonIcon("target", "Toggle Meeting Mode panel", () => this.toggleMeetingModeView());
+    this.addCommand({ id: "start-executive-meeting-mode", name: "Start Executive Meeting Mode", callback: () => this.activateMeetingModeView() });
+    this.addCommand({ id: "stop-executive-meeting-mode", name: "Stop Executive Meeting Mode", callback: () => this.deactivateMeetingModeView() });
+    this.addCommand({ id: "toggle-meeting-panel", name: "Toggle Meeting Panel", callback: () => this.toggleMeetingModeView() });
+    this.addCommand({ id: "capture-executive-follow-up", name: "Capture Executive Follow-up", callback: () => this.activateMeetingModeView("e") });
+    this.addCommand({ id: "capture-risk", name: "Capture Risk", callback: () => this.activateMeetingModeView("r") });
+    this.addCommand({ id: "capture-issue", name: "Capture Issue", callback: () => this.activateMeetingModeView("i") });
+    this.addCommand({ id: "capture-decision", name: "Capture Decision", callback: () => this.activateMeetingModeView("d") });
+    this.addCommand({ id: "capture-action", name: "Capture Action", callback: () => this.activateMeetingModeView("a") });
+
+    this.registerEvent(this.app.workspace.on("file-open", (file) => {
+      if (!this.settings.meetingModeAutoOpen) return;
+      if (!(file instanceof TFile) || file.extension !== "md") return;
+      const fm = this.app.metadataCache.getFileCache(file)?.frontmatter;
+      const hasField = (value) => (Array.isArray(value) ? value.length > 0 : Boolean(value));
+      // "people" is excluded here: it's auto-populated by the sync engine on nearly every
+      // synced note, so it would trigger auto-open constantly. Only an explicit meeting
+      // signal (participants) or an explicit single owner should pop the panel open.
+      if (hasField(fm?.participants) || hasField(fm?.owner)) {
+        this.activateMeetingModeView();
+      }
+    }));
+
     this.addSettingTab(new ACE2XKnowledgeOSSettingTab(this.app, this));
   }
 
   onunload() {
     if (this.syncDebounced?.cancel) this.syncDebounced.cancel();
     if (this.recordStatusDebounced?.cancel) this.recordStatusDebounced.cancel();
+    this.app.workspace.detachLeavesOfType(VIEW_TYPE_MEETING_MODE);
+  }
+
+  async activateMeetingModeView(prefill = null) {
+    const { workspace } = this.app;
+    let leaf = workspace.getLeavesOfType(VIEW_TYPE_MEETING_MODE)[0];
+    if (!leaf) {
+      leaf = workspace.getRightLeaf(false);
+      await leaf.setViewState({ type: VIEW_TYPE_MEETING_MODE, active: true });
+    }
+    workspace.revealLeaf(leaf);
+    if (prefill && leaf.view?.setPrefill) leaf.view.setPrefill(prefill);
+  }
+
+  deactivateMeetingModeView() {
+    this.app.workspace.detachLeavesOfType(VIEW_TYPE_MEETING_MODE);
+  }
+
+  async toggleMeetingModeView() {
+    const existing = this.app.workspace.getLeavesOfType(VIEW_TYPE_MEETING_MODE)[0];
+    if (existing) this.deactivateMeetingModeView();
+    else await this.activateMeetingModeView();
   }
   validateEnvironment() {
     const installedPlugins = this.app.plugins?.manifests || {};
@@ -298,6 +365,7 @@ export default class ACE2XKnowledgeOSPlugin extends Plugin {
       decisionsFolder: "Decisions folder",
       risksFolder: "Risks folder",
       issuesFolder: "Issues folder",
+      actionsFolder: "Actions folder",
       dashboardFolder: "Dashboard folder"
     };
 
@@ -356,7 +424,67 @@ export default class ACE2XKnowledgeOSPlugin extends Plugin {
   }
 
   folderSettingKeys() {
-    return ["peopleFolder", "executiveFolder", "decisionsFolder", "risksFolder", "issuesFolder", "dashboardFolder"];
+    return ["peopleFolder", "executiveFolder", "decisionsFolder", "risksFolder", "issuesFolder", "actionsFolder", "dashboardFolder"];
+  }
+
+  recordTypeKeys() {
+    return Object.keys(RECORD_TYPES);
+  }
+
+  recordTypeLabels() {
+    return Object.fromEntries(Object.entries(RECORD_TYPES).map(([key, definition]) => [key, definition.heading]));
+  }
+
+  recordFolderPaths() {
+    return Object.values(RECORD_TYPES)
+      .map((definition) => normalizePath(this.settings[definition.folderSetting] || ""))
+      .filter(Boolean);
+  }
+
+  recordTypeKeyForTypeName(typeName) {
+    const entry = Object.entries(RECORD_TYPES).find(([, definition]) => definition.typeName === typeName);
+    return entry ? entry[0] : null;
+  }
+
+  findAllSourceLineNumbers(content, typeKey) {
+    if (!typeKey) return [];
+    const lines = String(content || "").split("\n");
+    const pattern = new RegExp(`^(\\s*(?:[-*+]\\s*)?(${RECORD_TYPE_PATTERN})::\\s*)(.+?)(\\s*)$`, "i");
+    const result = [];
+    for (let i = 0; i < lines.length; i++) {
+      const match = lines[i].match(pattern);
+      if (match && match[2].toLowerCase() === typeKey) result.push(i);
+    }
+    return result;
+  }
+
+  findSourceLineNumber(content, typeKey, sentence) {
+    if (!typeKey) return -1;
+    const canonical = this.canonicalRecordText(sentence);
+    const lines = String(content || "").split("\n");
+    const pattern = new RegExp(`^(\\s*(?:[-*+]\\s*)?(${RECORD_TYPE_PATTERN})::\\s*)(.+?)(\\s*)$`, "i");
+    for (let i = 0; i < lines.length; i++) {
+      const match = lines[i].match(pattern);
+      if (!match || match[2].toLowerCase() !== typeKey) continue;
+      const parsed = this.parseInlineStatus(match[3]);
+      if (this.canonicalRecordText(parsed.text) === canonical) return i;
+    }
+    return -1;
+  }
+
+  async completeRecord(recordFile) {
+    await this.app.fileManager.processFrontMatter(recordFile, (fm) => {
+      fm.status = "Done";
+      fm.completed_date = fm.completed_date || this.todayDate();
+    });
+    await this.syncRecordStatusToSource(recordFile);
+  }
+
+  personFilePaths() {
+    return this.app.vault.getMarkdownFiles()
+      .filter((file) => this.isPersonFile(file))
+      .map((file) => file.path)
+      .sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" }));
   }
 
   vaultFolderPaths() {
@@ -412,6 +540,7 @@ export default class ACE2XKnowledgeOSPlugin extends Plugin {
       decisionsFolder: ["decisions", "decision"],
       risksFolder: ["risks", "risk register", "risk"],
       issuesFolder: ["issues", "issue register", "issue"],
+      actionsFolder: ["actions", "action items"],
       dashboardFolder: ["dashboards", "dashboard", "home"]
     };
     let changed = false;
@@ -514,7 +643,7 @@ export default class ACE2XKnowledgeOSPlugin extends Plugin {
     const path = normalizePath(file.path);
     const peopleFolder = normalizePath(this.settings.peopleFolder);
     if (path === peopleFolder || path.startsWith(peopleFolder + "/")) return false;
-    const managedFolders = [this.settings.executiveFolder, this.settings.decisionsFolder, this.settings.risksFolder, this.settings.issuesFolder]
+    const managedFolders = [this.settings.executiveFolder, this.settings.decisionsFolder, this.settings.risksFolder, this.settings.issuesFolder, this.settings.actionsFolder]
       .map((folder) => normalizePath(folder || ""))
       .filter(Boolean);
     if (managedFolders.some((folder) => path === folder || path.startsWith(folder + "/"))) return false;
@@ -533,7 +662,7 @@ export default class ACE2XKnowledgeOSPlugin extends Plugin {
       this.beginTransaction(`Sync ${file.basename}`);
       const result = await this.applyAnalysis(analysis);
       await this.persist();
-      new Notice(`Synced ${result.decisions} decisions, ${result.risks} risks, ${result.issues} issues, ${result.executive} executive follow-ups.`);
+      new Notice(`Synced ${result.decisions} decisions, ${result.risks} risks, ${result.issues} issues, ${result.executive} executive follow-ups and ${result.actions} actions.`);
     }).open();
   }
 
@@ -624,7 +753,7 @@ export default class ACE2XKnowledgeOSPlugin extends Plugin {
     this.beginTransaction(`Automatic sync ${file.basename}`);
     const result = await this.applyAnalysis(analysis);
     await this.persist();
-    if (showNotice) new Notice(`Synced ${result.decisions} decisions, ${result.risks} risks, ${result.issues} issues and ${result.executive} executive follow-ups.`);
+    if (showNotice) new Notice(`Synced ${result.decisions} decisions, ${result.risks} risks, ${result.issues} issues, ${result.executive} executive follow-ups and ${result.actions} actions.`);
   }
 
   async applyAnalysis(initialAnalysis) {
@@ -662,6 +791,7 @@ export default class ACE2XKnowledgeOSPlugin extends Plugin {
         risks: analysis.records.filter((r) => r.type === "r").length,
         issues: analysis.records.filter((r) => r.type === "i").length,
         executive: analysis.records.filter((r) => r.type === "e").length,
+        actions: analysis.records.filter((r) => r.type === "a").length,
         personFiles
       };
     } finally {
@@ -756,6 +886,28 @@ export default class ACE2XKnowledgeOSPlugin extends Plugin {
     return [...byPath.values()].sort((a, b) => a.basename.localeCompare(b.basename));
   }
 
+  resolveTypedLink(link, sourceFile, typeName) {
+    const destination = this.app.metadataCache.getFirstLinkpathDest(link.target, sourceFile.path);
+    if (!(destination instanceof TFile)) return null;
+    const fmType = String(this.app.metadataCache.getFileCache(destination)?.frontmatter?.type || "").toLowerCase();
+    if (fmType !== typeName) return null;
+    return {
+      path: destination.path,
+      basename: destination.basename,
+      display: link.alias || link.target,
+      canonicalLink: `[[${destination.path.replace(/\.md$/i, "")}|${link.alias || link.target}]]`
+    };
+  }
+
+  extractResolvedByType(text, sourceFile, typeName) {
+    const byPath = new Map();
+    for (const link of this.parseWikiLinks(text)) {
+      const resolved = this.resolveTypedLink(link, sourceFile, typeName);
+      if (resolved && !byPath.has(resolved.path)) byPath.set(resolved.path, resolved);
+    }
+    return [...byPath.values()].sort((a, b) => a.basename.localeCompare(b.basename));
+  }
+
   cleanGeneratedText(text) {
     const parsed = this.parseInlineStatus(text);
     const struck = this.statusIsClosed(parsed.status) || /^~~[\s\S]*~~$/.test(parsed.text.trim());
@@ -802,14 +954,17 @@ export default class ACE2XKnowledgeOSPlugin extends Plugin {
   extractRecords(text, sourceFile) {
     const records = [];
     const occurrences = new Map();
+    const autoLinkTypes = this.settings.autoLinkTypes || {};
     for (const line of text.split("\n")) {
-      const match = line.match(/^\s*(?:[-*+]\s*)?(d|r|i|e)::\s*(.+?)\s*$/i);
+      const match = line.match(new RegExp(`^\\s*(?:[-*+]\\s*)?(${RECORD_TYPE_PATTERN})::\\s*(.+?)\\s*$`, "i"));
       if (!match) continue;
       const type = match[1].toLowerCase();
       const parsedStatus = this.parseInlineStatus(match[2]);
       const recordText = parsedStatus.text.replace(/\s+/g, " ").trim();
       if (!recordText) continue;
       const peopleByPath = new Map();
+      const typedLinksByField = {};
+      for (const field of Object.keys(autoLinkTypes)) typedLinksByField[field] = new Map();
       const unresolvedLinks = [];
       for (const link of this.parseWikiLinks(recordText)) {
         const destination = this.app.metadataCache.getFirstLinkpathDest(link.target, sourceFile.path);
@@ -817,9 +972,18 @@ export default class ACE2XKnowledgeOSPlugin extends Plugin {
           unresolvedLinks.push(link.target);
           continue;
         }
-        if (!this.isPersonFile(destination)) continue;
-        const person = this.resolvePersonLink(link, sourceFile);
-        if (person) peopleByPath.set(person.path, person);
+        if (this.isPersonFile(destination)) {
+          const person = this.resolvePersonLink(link, sourceFile);
+          if (person) peopleByPath.set(person.path, person);
+          continue;
+        }
+        for (const [field, typeName] of Object.entries(autoLinkTypes)) {
+          const resolved = this.resolveTypedLink(link, sourceFile, typeName);
+          if (resolved) {
+            typedLinksByField[field].set(resolved.path, resolved);
+            break;
+          }
+        }
       }
       const occurrenceKey = `${type}|${this.canonicalRecordText(recordText)}`;
       const occurrence = (occurrences.get(occurrenceKey) || 0) + 1;
@@ -833,6 +997,7 @@ export default class ACE2XKnowledgeOSPlugin extends Plugin {
         displayText: this.cleanGeneratedText(recordText),
         personDisplayText: this.personRecordDisplayText(recordText),
         people: [...peopleByPath.values()],
+        typedLinks: Object.fromEntries(Object.entries(typedLinksByField).map(([field, byPath]) => [field, [...byPath.values()]])),
         unresolvedLinks
       });
     }
@@ -930,7 +1095,7 @@ export default class ACE2XKnowledgeOSPlugin extends Plugin {
     return `${date} - ${short} - ${record.id}.md`;
   }
 
-  buildRecordNote(record, sourceFile, sourceLink, date) {
+  buildRecordNote(record, sourceFile, sourceLink, date, existingPriority) {
     const definition = RECORD_TYPES[record.type];
     const sentence = this.cleanGeneratedText(record.text).replace(/^~~|~~$/g, "");
     const closed = this.statusIsClosed(record.status) || /^~~[\s\S]*~~$/.test(record.text.trim());
@@ -949,6 +1114,16 @@ export default class ACE2XKnowledgeOSPlugin extends Plugin {
       ...(closed && record.doneDate ? [`completed_date: ${record.doneDate}`] : []),
       `record_id: ${record.id}`
     ];
+    for (const field of Object.keys(this.settings.autoLinkTypes || {})) {
+      const links = record.typedLinks?.[field] || [];
+      if (!links.length) continue;
+      lines.push(`${field}:`, ...links.map((l) => `  - ${this.yamlQuote(`[[${l.basename}]]`)}`));
+    }
+    if (this.settings.priorityEnabled) {
+      const levels = this.settings.priorityLevels || ["None"];
+      const priority = levels.includes(existingPriority) ? existingPriority : levels[0];
+      lines.push(`priority: ${this.yamlQuote(priority)}`);
+    }
     if (tags.length) lines.push("tags:", ...tags);
     lines.push("---", "", sentence, "", `Source: ${sourceLink}`, "");
     return lines.join("\n");
@@ -961,8 +1136,11 @@ export default class ACE2XKnowledgeOSPlugin extends Plugin {
       await this.ensureFolder(folder);
       const path = normalizePath(`${folder}/${this.recordFileName(record, date)}`);
       expected.add(path);
-      const content = this.buildRecordNote(record, sourceFile, sourceLink, date);
       const existing = this.app.vault.getAbstractFileByPath(path);
+      const existingPriority = existing instanceof TFile
+        ? this.app.metadataCache.getFileCache(existing)?.frontmatter?.priority
+        : undefined;
+      const content = this.buildRecordNote(record, sourceFile, sourceLink, date, existingPriority);
       if (existing instanceof TFile) {
         const current = await this.app.vault.cachedRead(existing);
         if (current !== content) {
@@ -992,13 +1170,28 @@ export default class ACE2XKnowledgeOSPlugin extends Plugin {
   }
 
   buildKnowledgeBaseContent() {
+    const priorityOn = Boolean(this.settings.priorityEnabled);
+    const priorityOrder = priorityOn ? ["      - priority"] : [];
+    const typeFilters = Object.values(RECORD_TYPES).map((d) => `    - 'type == "${d.typeName}"'`);
+    const typeViews = Object.values(RECORD_TYPES).flatMap((d) => [
+      "  - type: table",
+      `    name: ${d.heading}`,
+      "    filters:",
+      "      and:",
+      `        - 'type == "${d.typeName}"'`,
+      "    order:",
+      "      - sentence",
+      "      - owner",
+      ...priorityOrder,
+      "      - source",
+      "      - status",
+      "      - date"
+    ]);
+
     return [
       "filters:",
       "  or:",
-      "    - 'type == \"decision\"'",
-      "    - 'type == \"risk\"'",
-      "    - 'type == \"issue\"'",
-      "    - 'type == \"executive-follow-up\"'",
+      ...typeFilters,
       "properties:",
       "  type:",
       "    displayName: Type",
@@ -1006,6 +1199,7 @@ export default class ACE2XKnowledgeOSPlugin extends Plugin {
       "    displayName: Sentence",
       "  owner:",
       "    displayName: Owner",
+      ...(priorityOn ? ["  priority:", "    displayName: Priority"] : []),
       "  source:",
       "    displayName: Source File",
       "  status:",
@@ -1022,53 +1216,11 @@ export default class ACE2XKnowledgeOSPlugin extends Plugin {
       "      - type",
       "      - sentence",
       "      - owner",
+      ...priorityOrder,
       "      - source",
       "      - status",
       "      - date",
-      "  - type: table",
-      "    name: Executive Follow-ups",
-      "    filters:",
-      "      and:",
-      "        - 'type == \"executive-follow-up\"'",
-      "    order:",
-      "      - sentence",
-      "      - owner",
-      "      - source",
-      "      - status",
-      "      - date",
-      "  - type: table",
-      "    name: Decisions",
-      "    filters:",
-      "      and:",
-      "        - 'type == \"decision\"'",
-      "    order:",
-      "      - sentence",
-      "      - owner",
-      "      - source",
-      "      - status",
-      "      - date",
-      "  - type: table",
-      "    name: Risks",
-      "    filters:",
-      "      and:",
-      "        - 'type == \"risk\"'",
-      "    order:",
-      "      - sentence",
-      "      - owner",
-      "      - source",
-      "      - status",
-      "      - date",
-      "  - type: table",
-      "    name: Issues",
-      "    filters:",
-      "      and:",
-      "        - 'type == \"issue\"'",
-      "    order:",
-      "      - sentence",
-      "      - owner",
-      "      - source",
-      "      - status",
-      "      - date",
+      ...typeViews,
       "  - type: table",
       "    name: By Owner",
       "    filters:",
@@ -1080,6 +1232,7 @@ export default class ACE2XKnowledgeOSPlugin extends Plugin {
       "    order:",
       "      - type",
       "      - sentence",
+      ...priorityOrder,
       "      - source",
       "      - status",
       "      - date",
@@ -1174,7 +1327,7 @@ export default class ACE2XKnowledgeOSPlugin extends Plugin {
   }
 
   async syncKnowledgeOSStatusChanges() {
-    const managedFolders = [this.settings.executiveFolder, this.settings.decisionsFolder, this.settings.risksFolder, this.settings.issuesFolder]
+    const managedFolders = [this.settings.executiveFolder, this.settings.decisionsFolder, this.settings.risksFolder, this.settings.issuesFolder, this.settings.actionsFolder]
       .map((folder) => normalizePath(folder || ""))
       .filter(Boolean);
     const recordFiles = this.app.vault.getMarkdownFiles().filter((file) => {
@@ -1240,7 +1393,7 @@ export default class ACE2XKnowledgeOSPlugin extends Plugin {
     const original = await this.app.vault.cachedRead(sourceFile);
     let changed = false;
     const updated = original.split("\n").map((line) => {
-      const match = line.match(/^(\s*(?:[-*+]\s*)?(d|r|i|e)::\s*)(.+?)(\s*)$/i);
+      const match = line.match(new RegExp(`^(\\s*(?:[-*+]\\s*)?(${RECORD_TYPE_PATTERN})::\\s*)(.+?)(\\s*)$`, "i"));
       if (!match || match[2].toLowerCase() !== indexedRecord.type) return line;
       const parsedSourceStatus = this.parseInlineStatus(match[3]);
       if (this.canonicalRecordText(parsedSourceStatus.text) !== this.canonicalRecordText(indexedRecord.text)) return line;
@@ -1328,6 +1481,7 @@ class ACE2XKnowledgeOSSettingTab extends PluginSettingTab {
     this.addFolderPicker(containerEl, "Decisions folder", "Folder for decision record notes.", "decisionsFolder", folderPaths);
     this.addFolderPicker(containerEl, "Risks folder", "Folder for risk record notes.", "risksFolder", folderPaths);
     this.addFolderPicker(containerEl, "Issues folder", "Folder for issue record notes.", "issuesFolder", folderPaths);
+    this.addFolderPicker(containerEl, "Actions folder", "Folder for a:: record notes.", "actionsFolder", folderPaths);
     this.addFolderPicker(containerEl, "Dashboard folder", "Folder where the master Base dashboard is created. Existing Base files are never overwritten.", "dashboardFolder", folderPaths);
 
     new Setting(containerEl)
@@ -1359,6 +1513,81 @@ class ACE2XKnowledgeOSSettingTab extends PluginSettingTab {
       .setDesc("Comma-separated heading prefixes ignored during analysis.")
       .addTextArea((text) => text.setValue((this.plugin.settings.excludedHeadings || []).join(", ")).onChange(async (value) => {
         this.plugin.settings.excludedHeadings = value.split(",").map((x) => x.trim().toLowerCase()).filter(Boolean);
+        await this.plugin.persist();
+      }));
+
+    new Setting(containerEl)
+      .setName("Enable priority field")
+      .setDesc("Adds an editable Priority property to record notes and the dashboard Base.")
+      .addToggle((toggle) => toggle.setValue(this.plugin.settings.priorityEnabled).onChange(async (value) => {
+        this.plugin.settings.priorityEnabled = value;
+        await this.plugin.persist();
+        this.display();
+      }));
+
+    if (this.plugin.settings.priorityEnabled) {
+      new Setting(containerEl)
+        .setName("Priority levels")
+        .setDesc("Comma-separated, in order. The first level is the default for new records.")
+        .addText((text) => text.setValue((this.plugin.settings.priorityLevels || []).join(", ")).onChange(async (value) => {
+          this.plugin.settings.priorityLevels = value.split(",").map((x) => x.trim()).filter(Boolean);
+          await this.plugin.persist();
+        }));
+    }
+
+    containerEl.createEl("h3", { text: "Meeting Mode" });
+
+    const personPaths = this.plugin.personFilePaths();
+    new Setting(containerEl)
+      .setName("Your person note")
+      .setDesc("Excludes you from Smart Owner Detection's candidate list when Meeting Mode reads a note's participants/people/owner.")
+      .addDropdown((dropdown) => {
+        dropdown.addOption("", "None selected");
+        for (const path of personPaths) dropdown.addOption(path, path);
+        dropdown.setValue(this.plugin.settings.yourPersonNote || "");
+        dropdown.onChange(async (value) => {
+          this.plugin.settings.yourPersonNote = value;
+          await this.plugin.persist();
+        });
+      });
+
+    new Setting(containerEl)
+      .setName("Open panel automatically for meeting notes")
+      .setDesc("Opens the Meeting Mode panel when a note with a participants or owner frontmatter field becomes active.")
+      .addToggle((toggle) => toggle.setValue(this.plugin.settings.meetingModeAutoOpen).onChange(async (value) => {
+        this.plugin.settings.meetingModeAutoOpen = value;
+        await this.plugin.persist();
+      }));
+
+    new Setting(containerEl)
+      .setName("Remember last owner")
+      .setDesc("Pre-select the previously used owner across captures when it's among the current note's candidates.")
+      .addToggle((toggle) => toggle.setValue(this.plugin.settings.meetingModeRememberOwner).onChange(async (value) => {
+        this.plugin.settings.meetingModeRememberOwner = value;
+        await this.plugin.persist();
+      }));
+
+    new Setting(containerEl)
+      .setName("Remember last category")
+      .setDesc("Pre-fill the Quick Capture prefix (d:: r:: i:: e:: a::) from your last capture.")
+      .addToggle((toggle) => toggle.setValue(this.plugin.settings.meetingModeRememberCategory).onChange(async (value) => {
+        this.plugin.settings.meetingModeRememberCategory = value;
+        await this.plugin.persist();
+      }));
+
+    new Setting(containerEl)
+      .setName("Show live counters")
+      .setDesc("Display per-type record counts in the Meeting Mode panel.")
+      .addToggle((toggle) => toggle.setValue(this.plugin.settings.meetingModeShowCounters).onChange(async (value) => {
+        this.plugin.settings.meetingModeShowCounters = value;
+        await this.plugin.persist();
+      }));
+
+    new Setting(containerEl)
+      .setName("Focus after save")
+      .setDesc("Refocus the Quick Capture field after each capture, keeping your hands on the keyboard.")
+      .addToggle((toggle) => toggle.setValue(this.plugin.settings.meetingModeFocusAfterSave).onChange(async (value) => {
+        this.plugin.settings.meetingModeFocusAfterSave = value;
         await this.plugin.persist();
       }));
 
@@ -1399,9 +1628,9 @@ class ACE2XKnowledgeOSSettingTab extends PluginSettingTab {
       ["r::", "Risk", "r:: Vendor delays may impact the schedule. [[John Doe]]"],
       ["i::", "Issue", "i:: Reporting currently requires administrator access."],
       ["e::", "Executive follow-up", "e:: Confirm FY27 funding with [[John Doe]]."],
+      ["a::", "Action (delegated to someone else)", "a:: Confirm pricing with the vendor. [[John Doe]]"],
       ["[[Name]]", "Person reference", "[[John Doe]] or an alias such as [[JD]]"],
       ["- [ ]", "Your task", "- [ ] Review licensing 📅 2026-07-31"],
-      ["- Action [[Name]]", "Another person's action", "- Confirm pricing with the vendor. [[John Doe]]"],
       ["#Topic", "Tag", "#Infrastructure or #IAM"],
       ["s::o / s::d", "Inline status", "d:: [[John Doe]] Approve the proposal. #Infrastructure s::o"],
       ["done::", "Completion date", "~~d:: [[John Doe]] Approve the proposal. s::d done::2026-07-18~~"],

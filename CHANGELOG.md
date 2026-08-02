@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.6.0] - 2026-08-02
+
+### Added
+
+- Added a new `a::` record type (Actions) for tasks delegated to other people, parallel to `d::`/`r::`/`i::`/`e::`, with its own configurable folder.
+- Added Executive Meeting Mode: a side panel (ribbon icon or `Toggle Meeting Panel` command) with:
+  - Quick Capture: type a line with a `d::`/`r::`/`i::`/`e::`/`a::` prefix (or plain text) and press Enter to append it to the active note, auto-append the detected owner's link and `s::o`, and sync immediately. Direct capture commands per type prefill the input.
+  - Smart Owner Detection: reads `owner`/`people`/`participants` frontmatter on the active note to populate an owner dropdown, excluding a configured "your person note" from the candidate list.
+  - Live per-type record counters for the active note; clicking a counter highlights all matching lines in the editor.
+  - Open Items list scoped to the selected owner (or vault-wide when no owner is selected), with text search, a complete checkbox that marks the record Done and strikes the source line, and click-to-navigate that scrolls to and flashes the matching source line.
+- Added auto-linking generalization: records can now resolve `project`/`program`/`capability`/`meeting` wikilinks (configurable via `autoLinkTypes`) into record note frontmatter, in addition to the existing person/owner resolution. Only links to existing notes are resolved; nothing is auto-created.
+- Added an optional Priority field (off by default) for record notes and the dashboard Base, with a configurable level list; the value is preserved across resyncs.
+- Added Meeting Mode settings: your person note, auto-open for meeting notes, remember last owner, remember last category, show live counters, focus after save.
+- The dashboard Base's type filters and per-type views are now generated dynamically from all configured record types instead of a hardcoded list, so new types (like Actions) appear automatically in newly created Base files. Existing Base files are never overwritten, so a dashboard created before this update needs `- 'type == "action"'` added to its filters manually to surface Actions.
+
 ## [0.5.0] - 2026-07-19
 
 ### Added
