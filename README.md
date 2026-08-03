@@ -19,7 +19,7 @@ Knowledge OS is an knowledge management framework for Obsidian that combines str
 
 • Dataview integration
 
-• Tasks integration
+• Native due-date capture for records and personal tasks (no Tasks plugin required)
 
 • Templater integration
 
@@ -39,16 +39,17 @@ Documentation
 
 ## Dependencies
 
-ACE2X Knowledge OS is designed to work with several excellent Obsidian community plugins. Four plugins are required for full functionality, while several others are recommended to enhance the overall experience.
+ACE2X Knowledge OS is designed to work with several excellent Obsidian community plugins. Three plugins are required for full functionality, while several others are recommended to enhance the overall experience.
 
 ### Required Community Plugins
 
 | Plugin | Purpose |
 |---------|---------|
 | **Dataview** | Metadata queries, dashboards, reporting, and dynamic views |
-| **Tasks** | Advanced task management and action tracking |
 | **Templater** | Automated note creation, templates, and workflows |
 | **Meta Bind** | Interactive dashboards, forms, and metadata editing |
+
+> Personal `- [ ]` checkboxes are native Obsidian markdown — no plugin required. Due dates on both record lines (`d::`/`r::`/`i::`/`e::`/`a::`) and personal task lines are handled natively by ACE2X's own `[due:: ]` suggest (type `[` on either kind of line). The Tasks community plugin is no longer required; if you were using its global task query, see the syntax reference in ACE2X settings for a Dataview `TASK` query equivalent.
 
 > [!IMPORTANT]
 > These plugins should be installed and enabled for ACE2X Knowledge OS to function as designed.

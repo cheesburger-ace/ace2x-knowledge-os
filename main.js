@@ -545,8 +545,9 @@ var DueDateSuggest = class extends import_obsidian2.EditorSuggest {
     if (!this.typeKeys.length) return null;
     const line = editor.getLine(cursor.line);
     const beforeCursor = line.slice(0, cursor.ch);
-    const linePattern = new RegExp(`^\\s*(?:[-*+]\\s*)?(${this.typeKeys.join("|")})::`, "i");
-    if (!linePattern.test(line)) return null;
+    const recordLinePattern = new RegExp(`^\\s*(?:[-*+]\\s*)?(${this.typeKeys.join("|")})::`, "i");
+    const taskLinePattern = /^\s*[-*+]\s*\[.\]/;
+    if (!recordLinePattern.test(line) && !taskLinePattern.test(line)) return null;
     const triggerMatch = beforeCursor.match(/\[(\w*)$/);
     if (!triggerMatch) return null;
     return {
@@ -655,7 +656,6 @@ var RECORD_TYPES = {
 var RECORD_TYPE_PATTERN = Object.keys(RECORD_TYPES).join("|");
 var REQUIRED_PLUGINS = [
   { id: "dataview", name: "Dataview" },
-  { id: "obsidian-tasks-plugin", name: "Tasks" },
   { id: "templater-obsidian", name: "Templater" },
   { id: "obsidian-meta-bind-plugin", name: "Meta Bind" }
 ];
@@ -811,6 +811,11 @@ var ACE2XKnowledgeOSPlugin = class extends import_obsidian3.Plugin {
     this.index = saved.index || {};
     this.processingPaths = /* @__PURE__ */ new Set();
     this.lastTransaction = null;
+    this.taskContentCache = /* @__PURE__ */ new Map();
+    const activeAtLoad = this.app.workspace.getActiveFile();
+    if (activeAtLoad instanceof import_obsidian3.TFile && activeAtLoad.extension === "md") {
+      this.app.vault.read(activeAtLoad).then((content) => this.taskContentCache.set(activeAtLoad.path, content));
+    }
     this.syncDebounced = (0, import_obsidian3.debounce)(async (file) => {
       if (file instanceof import_obsidian3.TFile) await this.syncFile(file, false);
     }, this.settings.debounceMs, true);
@@ -854,6 +859,17 @@ var ACE2XKnowledgeOSPlugin = class extends import_obsidian3.Plugin {
         return;
       }
       if (this.settings.autoSync && this.shouldProcess(file)) this.syncDebounced(file);
+    }));
+    this.registerEvent(this.app.vault.on("modify", (file) => {
+      if (!(file instanceof import_obsidian3.TFile) || file.extension !== "md") return;
+      if (this.processingPaths.has(file.path)) return;
+      if (this.isPersonFile(file) || this.isManagedRecordFile(file) || this.isManagedRecordPath(file)) return;
+      void this.syncTaskCompletionDates(file);
+    }));
+    this.registerEvent(this.app.workspace.on("file-open", async (file) => {
+      if (file instanceof import_obsidian3.TFile && file.extension === "md") {
+        this.taskContentCache.set(file.path, await this.app.vault.read(file));
+      }
     }));
     this.registerView(VIEW_TYPE_MEETING_MODE, (leaf) => new MeetingModeView(leaf, this));
     this.registerEditorExtension(highlightLinesField);
@@ -1334,6 +1350,42 @@ var ACE2XKnowledgeOSPlugin = class extends import_obsidian3.Plugin {
   }
   stripIgnoredContent(text) {
     return text.replace(/^---\n[\s\S]*?\n---\n?/m, "").replace(/```[\s\S]*?```/g, "").replace(/`[^`]*`/g, "").replace(/https?:\/\/\S+/g, "").replace(/\[([^\]]+)\]\([^)]+\)/g, "$1").replace(/!\[\[.*?\]\]/g, "").replace(/\[\[([^\]|]+)\|([^\]]+)\]\]/g, "$2").replace(/\[\[([^\]]+)\]\]/g, "$1");
+  }
+  async syncTaskCompletionDates(file) {
+    const newContent = await this.app.vault.read(file);
+    const oldContent = this.taskContentCache.get(file.path);
+    this.taskContentCache.set(file.path, newContent);
+    if (oldContent === void 0 || oldContent === newContent) return;
+    const oldLines = oldContent.split("\n");
+    const newLines = newContent.split("\n");
+    if (oldLines.length !== newLines.length) return;
+    const checkboxPattern = /^\s*[-*+]\s*\[(.)\]/;
+    const completedPattern = /\s*\[completed::\s*\d{4}-\d{2}-\d{2}\]\s*$/i;
+    let changed = false;
+    const resultLines = newLines.map((newLine, i) => {
+      const oldLine = oldLines[i];
+      if (oldLine === newLine) return newLine;
+      const oldMatch = oldLine.match(checkboxPattern);
+      const newMatch = newLine.match(checkboxPattern);
+      if (!oldMatch || !newMatch) return newLine;
+      const wasDone = /[xX]/.test(oldMatch[1]);
+      const isDone = /[xX]/.test(newMatch[1]);
+      if (wasDone === isDone) return newLine;
+      changed = true;
+      if (isDone) {
+        return completedPattern.test(newLine) ? newLine : `${newLine} [completed:: ${this.todayDate()}]`;
+      }
+      return newLine.replace(completedPattern, "");
+    });
+    if (!changed) return;
+    const updated = resultLines.join("\n");
+    this.taskContentCache.set(file.path, updated);
+    this.processingPaths.add(file.path);
+    try {
+      await this.app.vault.modify(file, updated);
+    } finally {
+      this.processingPaths.delete(file.path);
+    }
   }
   extractDueDate(text) {
     const match = String(text || "").match(/\[due::\s*(\d{4}-\d{2}-\d{2})\]/i);
@@ -1993,7 +2045,7 @@ var ACE2XKnowledgeOSSettingTab = class extends import_obsidian3.PluginSettingTab
       ["e::", "Executive follow-up", "e:: Confirm FY27 funding with [[John Doe]].", "e"],
       ["a::", "Action (delegated to someone else)", "a:: Confirm pricing with the vendor. [[John Doe]]", "a"],
       ["[[Name]]", "Person reference", "[[John Doe]] or an alias such as [[JD]]"],
-      ["- [ ]", "Your task", "- [ ] Review licensing \u{1F4C5} 2026-07-31"],
+      ["- [ ]", "Your task (native Obsidian checkbox, click to complete)", "- [x] Review licensing [due:: 2026-07-31] [completed:: 2026-07-30]"],
       ["#Topic", "Tag", "#Infrastructure or #IAM"],
       ["s::o / s::d", "Inline status", "d:: [[John Doe]] Approve the proposal. #Infrastructure s::o"],
       ["[due:: ]", "Due date", "e:: Confirm FY27 funding with [[John Doe]]. [due:: 2026-08-28]"],
@@ -2013,7 +2065,9 @@ var ACE2XKnowledgeOSSettingTab = class extends import_obsidian3.PluginSettingTab
     notes.createEl("p", { text: "Only links resolving to a person page are synchronized to People pages. A person page is recognized by its location in the People folder or by type: person in frontmatter." });
     notes.createEl("p", { text: "Use s:: inline at the end of a record. Write s::o for Open and s::d for Done. The aliases s::c, done, closed, and complete are accepted and normalized. Base status edits synchronize back to the compact inline value." });
     notes.createEl("p", { text: "When a record becomes Done, synchronization applies strikethrough and adds done:: YYYY-MM-DD. Reopening removes both the strikethrough and completion date." });
-    notes.createEl("p", { text: "On a line starting with d:: r:: i:: e:: or a::, typing [ offers a due:: suggestion. Selecting it opens a date picker and inserts [due:: YYYY-MM-DD]. The due date is parsed out of the sentence, synced to the record note's due field, and shown as a column in the dashboard Base. Removing it from the source line clears it on the next sync." });
+    notes.createEl("p", { text: "On a line starting with d:: r:: i:: e:: a:: or a - [ ] task checkbox, typing [ offers a due:: suggestion. Selecting it opens a date picker and inserts [due:: YYYY-MM-DD]. On a d/r/i/e/a line the due date is parsed out of the sentence, synced to the record note's due field, and shown as a column in the dashboard Base; removing it from the source line clears it on the next sync. On a personal task line it is just plain text for your own reference \u2014 ACE2X does not sync personal tasks." });
+    notes.createEl("p", { text: "The Tasks community plugin is not required. Checkboxes are native Obsidian markdown, and due dates are handled by ACE2X's own [due:: ] suggest above. If you were using Tasks' global query to list open tasks, use a Dataview query instead, for example: TASK WHERE !completed" });
+    notes.createEl("p", { text: "Checking a - [ ] task checkbox appends [completed:: YYYY-MM-DD] to the end of the line automatically. Unchecking it removes the completed date again. This is plain text for your own reference; ACE2X does not sync personal tasks." });
     notes.createEl("p", { text: "Editing, changing status, removing a person, or deleting a record updates every associated person page the next time the source note is synced." });
   }
 };

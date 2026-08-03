@@ -27,8 +27,9 @@ export class DueDateSuggest extends EditorSuggest<DueDateSuggestion> {
     if (!this.typeKeys.length) return null;
     const line = editor.getLine(cursor.line);
     const beforeCursor = line.slice(0, cursor.ch);
-    const linePattern = new RegExp(`^\\s*(?:[-*+]\\s*)?(${this.typeKeys.join("|")})::`, "i");
-    if (!linePattern.test(line)) return null;
+    const recordLinePattern = new RegExp(`^\\s*(?:[-*+]\\s*)?(${this.typeKeys.join("|")})::`, "i");
+    const taskLinePattern = /^\s*[-*+]\s*\[.\]/;
+    if (!recordLinePattern.test(line) && !taskLinePattern.test(line)) return null;
 
     const triggerMatch = beforeCursor.match(/\[(\w*)$/);
     if (!triggerMatch) return null;

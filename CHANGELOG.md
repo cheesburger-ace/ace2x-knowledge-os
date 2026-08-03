@@ -18,6 +18,11 @@
 - Added colored inline highlighting for `d::`/`r::`/`i::`/`e::`/`a::` markers (grey/pink/yellow/green/blue) in both edit mode and reading view, so record types are easier to spot while scanning a note. The same colors are shown in the settings tab's syntax reference table.
 - Added a due-date `EditorSuggest`: typing `[` on a line that starts with a record marker offers a `due::` suggestion; selecting it opens a small date-picker dialog (with Today/Tomorrow/Next week shortcuts) and inserts `[due:: YYYY-MM-DD]`. The due date is parsed out of the record's sentence, synced to the record note's `due` frontmatter field, and added as a column in the dashboard Base (existing Base files need `due` added to their properties/order manually to see it).
 
+### Changed
+
+- The Tasks community plugin is no longer required. Personal `- [ ]` checkboxes are native Obsidian markdown and always worked without it; the due-date `[due:: ]` suggest now also triggers on `- [ ]` task lines (not just record lines), so due dates no longer need Tasks' own emoji shortcut. If you relied on Tasks' global query to list open tasks, replace it with an equivalent Dataview query, e.g. `TASK WHERE !completed` (Dataview is already a required plugin).
+- Checking a `- [ ]` task checkbox now automatically appends `[completed:: YYYY-MM-DD]` to the end of the line; unchecking it removes the completed date again. Detected as a live editor extension, so it works the same way Tasks' own auto-done-date behavior did, without needing that plugin.
+
 ## [0.5.0] - 2026-07-19
 
 ### Added
