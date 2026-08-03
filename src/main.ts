@@ -489,13 +489,18 @@ export default class ACE2XKnowledgeOSPlugin extends Plugin {
     const canonical = this.canonicalRecordText(sentence);
     const lines = String(content || "").split("\n");
     const pattern = new RegExp(`^(\\s*(?:[-*+]\\s*)?(${RECORD_TYPE_PATTERN})::\\s*)(.+?)(\\s*)$`, "i");
+    const candidates = [];
     for (let i = 0; i < lines.length; i++) {
       const match = lines[i].match(pattern);
       if (!match || match[2].toLowerCase() !== typeKey) continue;
-      const parsed = this.parseInlineStatus(match[3]);
-      if (this.canonicalRecordText(parsed.text) === canonical) return i;
+      const lineCanonical = this.canonicalRecordText(this.parseInlineStatus(match[3]).text);
+      if (lineCanonical === canonical) return i;
+      candidates.push({ index: i, canonical: lineCanonical });
     }
-    return -1;
+    // The source line may have been edited since the record note was last synced. Fall back to a
+    // prefix match (handles text appended or trimmed at the end) rather than reporting no match at all.
+    const prefixMatch = candidates.find((c) => c.canonical.startsWith(canonical) || canonical.startsWith(c.canonical));
+    return prefixMatch ? prefixMatch.index : -1;
   }
 
   async completeRecord(recordFile) {
@@ -752,7 +757,8 @@ export default class ACE2XKnowledgeOSPlugin extends Plugin {
     const scanContent = this.stripIgnoredContent(scoped);
     const tags = this.extractTags(scanContent);
     const people = this.extractResolvedPeople(scoped, file);
-    const unresolvedLinks = [...new Set(records.flatMap((r) => r.unresolvedLinks))].sort();
+    const taskUnresolvedLinks = this.extractTaskUnresolvedLinks(scoped, file);
+    const unresolvedLinks = [...new Set([...records.flatMap((r) => r.unresolvedLinks), ...taskUnresolvedLinks])].sort();
     const affectedPersonPaths = [...new Set(records.flatMap((r) => r.people.map((p) => p.path)))];
     const signature = JSON.stringify({
       tags,
@@ -934,6 +940,18 @@ export default class ACE2XKnowledgeOSPlugin extends Plugin {
       if (target) links.push({ target, alias: alias?.trim() || null, raw: match[0] });
     }
     return links;
+  }
+
+  extractTaskUnresolvedLinks(text, sourceFile) {
+    const unresolved = [];
+    for (const line of text.split("\n")) {
+      if (!/^\s*[-*+]\s*\[.\]/.test(line)) continue;
+      for (const link of this.parseWikiLinks(line)) {
+        const destination = this.app.metadataCache.getFirstLinkpathDest(link.target, sourceFile.path);
+        if (!destination) unresolved.push(link.target);
+      }
+    }
+    return unresolved;
   }
 
   isPersonFile(file) {
@@ -1529,6 +1547,21 @@ class ACE2XKnowledgeOSSettingTab extends PluginSettingTab {
         await this.plugin.persist();
       }));
 
+    new Setting(containerEl)
+      .setName("Sync delay")
+      .setDesc("How long to wait after you stop typing before Automatic sync runs, and before a Base status edit syncs back to the source note. Reload the plugin after changing this for it to take effect.")
+      .addDropdown((dropdown) => {
+        const presets = { "1800": "1.8 seconds", "300000": "5 minutes", "900000": "15 minutes" };
+        for (const [ms, label] of Object.entries(presets)) dropdown.addOption(ms, label);
+        const current = String(this.plugin.settings.debounceMs);
+        if (!(current in presets)) dropdown.addOption(current, `${current} ms (custom)`);
+        dropdown.setValue(current);
+        dropdown.onChange(async (value) => {
+          this.plugin.settings.debounceMs = parseInt(value, 10);
+          await this.plugin.persist();
+        });
+      });
+
     const folderPaths = this.plugin.vaultFolderPaths();
 
     new Setting(containerEl)
@@ -1581,7 +1614,7 @@ class ACE2XKnowledgeOSSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("Create unresolved links as people")
-      .setDesc("Off by default. When enabled, unresolved links inside d::, r::, i:: or e:: records create person pages.")
+      .setDesc("Off by default. When enabled, unresolved links inside d::, r::, i::, e::, a:: records or - [ ] task lines create person pages.")
       .addToggle((toggle) => toggle.setValue(this.plugin.settings.autoCreatePeople).onChange(async (value) => {
         this.plugin.settings.autoCreatePeople = value;
         await this.plugin.persist();
@@ -1741,6 +1774,7 @@ class ACE2XKnowledgeOSSettingTab extends PluginSettingTab {
     notes.createEl("p", { text: "On a line starting with d:: r:: i:: e:: a:: or a - [ ] task checkbox, typing [ offers a due:: suggestion. Selecting it opens a date picker and inserts [due:: YYYY-MM-DD]. On a d/r/i/e/a line the due date is parsed out of the sentence, synced to the record note's due field, and shown as a column in the dashboard Base; removing it from the source line clears it on the next sync. On a personal task line it is just plain text for your own reference — ACE2X does not sync personal tasks." });
     notes.createEl("p", { text: "The Tasks community plugin is not required. Checkboxes are native Obsidian markdown, and due dates are handled by ACE2X's own [due:: ] suggest above. If you were using Tasks' global query to list open tasks, use a Dataview query instead, for example: TASK WHERE !completed" });
     notes.createEl("p", { text: "Checking a - [ ] task checkbox appends [completed:: YYYY-MM-DD] to the end of the line automatically. Unchecking it removes the completed date again. This is plain text for your own reference; ACE2X does not sync personal tasks." });
+    notes.createEl("p", { text: "A [[Name]] link on a - [ ] task line is treated the same as one inside a d/r/i/e/a record for unresolved-link handling: if it doesn't resolve to an existing note, running a sync (with \"Create unresolved links as people\" enabled) creates a person page for it using the person template. The task line itself is still not synced or tracked as a record." });
     notes.createEl("p", { text: "Editing, changing status, removing a person, or deleting a record updates every associated person page the next time the source note is synced." });
   }
 }

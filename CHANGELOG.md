@@ -22,6 +22,20 @@
 
 - The Tasks community plugin is no longer required. Personal `- [ ]` checkboxes are native Obsidian markdown and always worked without it; the due-date `[due:: ]` suggest now also triggers on `- [ ]` task lines (not just record lines), so due dates no longer need Tasks' own emoji shortcut. If you relied on Tasks' global query to list open tasks, replace it with an equivalent Dataview query, e.g. `TASK WHERE !completed` (Dataview is already a required plugin).
 - Checking a `- [ ]` task checkbox now automatically appends `[completed:: YYYY-MM-DD]` to the end of the line; unchecking it removes the completed date again. Detected as a live editor extension, so it works the same way Tasks' own auto-done-date behavior did, without needing that plugin.
+- Unresolved `[[Name]]` links on `- [ ]` personal task lines are now picked up during sync the same way unresolved links inside d::/r::/i::/e::/a:: records already were — with "Create unresolved links as people" enabled, a person page is created from the person template. The task line itself is still never synced or tracked as a record.
+- Added a Tasks section to the Meeting Mode panel, below Open Items: lists open `- [ ]` personal tasks scoped the same way Open Items is (by the current/searched owner, or vault-wide when none is selected — matched by whether the task line contains a `[[Person]]` link to that owner). A checkbox per row toggles the task (reusing the existing checked/unchecked `[completed:: ]` logic); clicking the text navigates to and flashes the source line.
+- Added a "Tasks: N" counter alongside the existing per-type record counters, showing the count of open `- [ ]` lines in the active note; clicking it highlights all of them in the editor, same as the record-type counters.
+- Clicking an Open Items or Tasks row in the Meeting Mode panel now opens the source note in a new tab instead of replacing whatever was in the active pane — unless that note is already open in an existing tab, in which case it switches to that tab instead of opening a duplicate.
+
+### Fixed
+
+- Clicking an Open Item whose record note frontmatter is out of sync with the source line (e.g. you edited the line after the last sync) previously failed to scroll/highlight silently. It now falls back to a prefix match (handles text appended or trimmed since the last sync) and shows a Notice explaining what happened when it truly can't find a match, instead of failing with no feedback.
+
+### Added
+
+- Added a "Sync delay" setting exposing the previously hardcoded `debounceMs` (default 1800ms) — controls how long Automatic sync waits after you stop typing, and how long a Base status edit waits before syncing back to the source note. Presented as a dropdown with presets (1.8 seconds, 5 minutes, 15 minutes); a previously-set custom value still shows as an extra option. Requires reloading the plugin after changing it, since the debounced functions are created once at load time.
+
+A flush-on-app-close feature (sync any pending edit immediately when Obsidian quits) was attempted and reverted — Electron doesn't give plugins a reliable window to finish async file writes between quit and process exit, so `onunload` couldn't be made to complete the flush in practice. If a delay-worth of edits sits unsynced, run "Sync entire vault" or "Sync current note" before closing Obsidian.
 
 ## [0.5.0] - 2026-07-19
 

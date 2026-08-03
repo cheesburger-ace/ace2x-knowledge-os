@@ -1,4 +1,4 @@
-import { ItemView, WorkspaceLeaf, TFile, MarkdownView } from "obsidian";
+import { ItemView, WorkspaceLeaf, TFile, MarkdownView, Notice } from "obsidian";
 import { EditorView } from "@codemirror/view";
 import { parseCaptureInput, buildCaptureLine, appendLineToFile, CaptureOwner } from "./capture";
 import { setHighlightLines } from "./highlightExtension";
@@ -29,6 +29,7 @@ export interface MeetingModePlugin {
   findSourceLineNumber(content: string, typeKey: string | null, sentence: string): number;
   findAllSourceLineNumbers(content: string, typeKey: string | null): number[];
   personFilePaths(): string[];
+  shouldProcess(file: TFile): boolean;
 }
 
 interface OpenItemRow {
@@ -36,6 +37,13 @@ interface OpenItemRow {
   sentence: string;
   sourcePath: string;
   type: string;
+}
+
+interface TaskRow {
+  file: TFile;
+  lineIndex: number;
+  rawLine: string;
+  text: string;
 }
 
 function parseWikilinkString(raw: string): { target: string; alias: string | null } | null {
@@ -58,6 +66,7 @@ export class MeetingModeView extends ItemView {
   openItemsScopeEl!: HTMLElement;
   openItemsSearchEl!: HTMLInputElement;
   openItemsEl!: HTMLElement;
+  tasksEl!: HTMLElement;
   activeSourceFile: TFile | null = null;
   currentOwner: PersonEntry | null = null;
   personSearchOwner: PersonEntry | null = null;
@@ -122,6 +131,7 @@ export class MeetingModeView extends ItemView {
       const value = this.personSearchEl.value.trim();
       this.personSearchOwner = value ? this.resolvePersonByName(value) : null;
       this.renderOpenItems();
+      this.renderTasks();
     });
 
     const scopeRow = openItemsSection.createDiv({ cls: "aceto-mm-open-items-scope" });
@@ -131,6 +141,7 @@ export class MeetingModeView extends ItemView {
       this.personSearchEl.value = "";
       this.personSearchOwner = null;
       this.renderOpenItems();
+      this.renderTasks();
     });
 
     this.openItemsSearchEl = openItemsSection.createEl("input", {
@@ -139,6 +150,10 @@ export class MeetingModeView extends ItemView {
     });
     this.openItemsSearchEl.addEventListener("input", () => this.renderOpenItems());
     this.openItemsEl = openItemsSection.createDiv({ cls: "aceto-mm-open-items-list" });
+
+    const tasksSection = container.createDiv({ cls: "aceto-mm-tasks" });
+    tasksSection.createEl("div", { cls: "aceto-mm-section-label", text: "Tasks" });
+    this.tasksEl = tasksSection.createDiv({ cls: "aceto-mm-open-items-list" });
 
     this.registerEvent(this.app.workspace.on("active-leaf-change", () => this.refreshHeader()));
     this.registerEvent(this.app.workspace.on("file-open", () => this.refreshHeader()));
@@ -178,7 +193,7 @@ export class MeetingModeView extends ItemView {
     this.refreshCounters();
   }
 
-  refreshCounters(): void {
+  async refreshCounters(): Promise<void> {
     this.countersEl.empty();
     if (!this.plugin.settings.meetingModeShowCounters) return;
     const file = this.activeSourceFile;
@@ -194,23 +209,36 @@ export class MeetingModeView extends ItemView {
         counterEl.addEventListener("click", () => this.highlightRecordsOfType(type));
       }
     }
+
+    const taskCount = file ? this.countOpenTaskLines(await this.app.vault.cachedRead(file)) : 0;
+    const taskCounterEl = this.countersEl.createEl("span", { cls: "aceto-mm-counter", text: `Tasks: ${taskCount}` });
+    if (taskCount > 0) {
+      taskCounterEl.addClass("is-clickable");
+      taskCounterEl.addEventListener("click", () => this.highlightOpenTasksInEditor());
+    }
+  }
+
+  countOpenTaskLines(content: string): number {
+    const pattern = /^\s*[-*+]\s*\[(.)\]/;
+    let count = 0;
+    for (const line of content.split("\n")) {
+      const match = line.match(pattern);
+      if (match && !/[xX]/.test(match[1])) count++;
+    }
+    return count;
   }
 
   findActiveMarkdownLeaf(file: TFile): WorkspaceLeaf | null {
     return this.app.workspace.getLeavesOfType("markdown").find((leaf) => (leaf.view as any)?.file?.path === file.path) || null;
   }
 
-  highlightRecordsOfType(typeKey: string): void {
-    const file = this.activeSourceFile;
-    if (!file) return;
+  dispatchLineHighlight(file: TFile, lineNumbers: number[]): void {
     const leaf = this.findActiveMarkdownLeaf(file);
     const markdownView = leaf?.view instanceof MarkdownView ? leaf.view : null;
     const cm: EditorView | undefined = (markdownView?.editor as any)?.cm;
     if (!leaf || !markdownView || !cm) return;
 
     this.app.workspace.revealLeaf(leaf);
-    const content = markdownView.editor.getValue();
-    const lineNumbers = this.plugin.findAllSourceLineNumbers(content, typeKey).map((i) => i + 1);
     cm.dispatch({ effects: setHighlightLines.of(lineNumbers) });
 
     if (this.highlightClearTimer !== null) window.clearTimeout(this.highlightClearTimer);
@@ -218,6 +246,33 @@ export class MeetingModeView extends ItemView {
       cm.dispatch({ effects: setHighlightLines.of([]) });
       this.highlightClearTimer = null;
     }, 4000);
+  }
+
+  highlightRecordsOfType(typeKey: string): void {
+    const file = this.activeSourceFile;
+    if (!file) return;
+    const leaf = this.findActiveMarkdownLeaf(file);
+    const markdownView = leaf?.view instanceof MarkdownView ? leaf.view : null;
+    if (!markdownView) return;
+    const content = markdownView.editor.getValue();
+    const lineNumbers = this.plugin.findAllSourceLineNumbers(content, typeKey).map((i) => i + 1);
+    this.dispatchLineHighlight(file, lineNumbers);
+  }
+
+  highlightOpenTasksInEditor(): void {
+    const file = this.activeSourceFile;
+    if (!file) return;
+    const leaf = this.findActiveMarkdownLeaf(file);
+    const markdownView = leaf?.view instanceof MarkdownView ? leaf.view : null;
+    if (!markdownView) return;
+    const content = markdownView.editor.getValue();
+    const pattern = /^\s*[-*+]\s*\[(.)\]/;
+    const lineNumbers: number[] = [];
+    content.split("\n").forEach((line, index) => {
+      const match = line.match(pattern);
+      if (match && !/[xX]/.test(match[1])) lineNumbers.push(index + 1);
+    });
+    this.dispatchLineHighlight(file, lineNumbers);
   }
 
   async handleCaptureSubmit(): Promise<void> {
@@ -322,6 +377,7 @@ export class MeetingModeView extends ItemView {
         text: "No owner detected — include [[Person]] in the capture line"
       });
       this.renderOpenItems();
+      this.renderTasks();
       return;
     }
 
@@ -352,9 +408,11 @@ export class MeetingModeView extends ItemView {
         void this.plugin.persist();
       }
       this.renderOpenItems();
+      this.renderTasks();
     });
 
     this.renderOpenItems();
+    this.renderTasks();
   }
 
   queryOpenItems(): OpenItemRow[] {
@@ -444,17 +502,90 @@ export class MeetingModeView extends ItemView {
     this.refreshCounters();
   }
 
+  openOrReuseLeaf(file: TFile): WorkspaceLeaf {
+    return this.findActiveMarkdownLeaf(file) || this.app.workspace.getLeaf("tab");
+  }
+
   async openSourceForItem(row: OpenItemRow): Promise<void> {
     const sourceFile = this.app.vault.getAbstractFileByPath(row.sourcePath);
     if (!(sourceFile instanceof TFile)) return;
     const typeKey = this.plugin.recordTypeKeyForTypeName(row.type);
     const content = await this.app.vault.cachedRead(sourceFile);
     const line = this.plugin.findSourceLineNumber(content, typeKey, row.sentence);
-    const leaf = this.app.workspace.getLeaf();
+    const leaf = this.openOrReuseLeaf(sourceFile);
+    this.app.workspace.revealLeaf(leaf);
     if (line >= 0) {
       await leaf.openFile(sourceFile, { eState: { line, focus: true } } as any);
     } else {
       await leaf.openFile(sourceFile);
+      new Notice("Couldn't find the exact matching line — the record note may be out of sync with the source. Try syncing this note.");
     }
+  }
+
+  async queryPersonalTasks(): Promise<TaskRow[]> {
+    const effectiveOwner = this.personSearchOwner || this.currentOwner;
+    const rows: TaskRow[] = [];
+    const checkboxPattern = /^\s*[-*+]\s*\[(.)\]/;
+
+    for (const file of this.app.vault.getMarkdownFiles()) {
+      if (!this.plugin.shouldProcess(file)) continue;
+      const content = await this.app.vault.cachedRead(file);
+      const lines = content.split("\n");
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        const match = line.match(checkboxPattern);
+        if (!match || /[xX]/.test(match[1])) continue;
+        if (effectiveOwner) {
+          const hasOwnerLink = this.plugin
+            .parseWikiLinks(line)
+            .some((link) => this.plugin.resolvePersonLink(link, file)?.path === effectiveOwner.path);
+          if (!hasOwnerLink) continue;
+        }
+        rows.push({
+          file,
+          lineIndex: i,
+          rawLine: line,
+          text: line.replace(checkboxPattern, "").trim()
+        });
+      }
+    }
+    return rows;
+  }
+
+  async renderTasks(): Promise<void> {
+    if (!this.tasksEl) return;
+    const rows = await this.queryPersonalTasks();
+    this.tasksEl.empty();
+
+    if (!rows.length) {
+      this.tasksEl.createEl("div", { cls: "aceto-mm-open-items-empty", text: "No open tasks." });
+      return;
+    }
+
+    for (const row of rows) {
+      const rowEl = this.tasksEl.createDiv({ cls: "aceto-mm-open-item" });
+      const checkbox = rowEl.createEl("input", { attr: { type: "checkbox" } });
+      checkbox.addEventListener("change", () => void this.toggleTask(row));
+      const text = rowEl.createEl("span", { cls: "aceto-mm-open-item-text", text: row.text });
+      text.addEventListener("click", () => void this.openTaskSource(row));
+    }
+  }
+
+  async toggleTask(row: TaskRow): Promise<void> {
+    const content = await this.app.vault.read(row.file);
+    const lines = content.split("\n");
+    if (lines[row.lineIndex] !== row.rawLine) {
+      await this.renderTasks();
+      return;
+    }
+    lines[row.lineIndex] = row.rawLine.replace(/^(\s*[-*+]\s*)\[.\]/, (_match, prefix) => `${prefix}[x]`);
+    await this.app.vault.modify(row.file, lines.join("\n"));
+    await this.renderTasks();
+  }
+
+  async openTaskSource(row: TaskRow): Promise<void> {
+    const leaf = this.openOrReuseLeaf(row.file);
+    this.app.workspace.revealLeaf(leaf);
+    await leaf.openFile(row.file, { eState: { line: row.lineIndex, focus: true } } as any);
   }
 }

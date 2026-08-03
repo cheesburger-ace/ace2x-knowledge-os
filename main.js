@@ -146,6 +146,7 @@ var MeetingModeView = class extends import_obsidian.ItemView {
       const value = this.personSearchEl.value.trim();
       this.personSearchOwner = value ? this.resolvePersonByName(value) : null;
       this.renderOpenItems();
+      this.renderTasks();
     });
     const scopeRow = openItemsSection.createDiv({ cls: "aceto-mm-open-items-scope" });
     this.openItemsScopeEl = scopeRow.createEl("span");
@@ -154,6 +155,7 @@ var MeetingModeView = class extends import_obsidian.ItemView {
       this.personSearchEl.value = "";
       this.personSearchOwner = null;
       this.renderOpenItems();
+      this.renderTasks();
     });
     this.openItemsSearchEl = openItemsSection.createEl("input", {
       cls: "aceto-mm-open-items-search",
@@ -161,6 +163,9 @@ var MeetingModeView = class extends import_obsidian.ItemView {
     });
     this.openItemsSearchEl.addEventListener("input", () => this.renderOpenItems());
     this.openItemsEl = openItemsSection.createDiv({ cls: "aceto-mm-open-items-list" });
+    const tasksSection = container.createDiv({ cls: "aceto-mm-tasks" });
+    tasksSection.createEl("div", { cls: "aceto-mm-section-label", text: "Tasks" });
+    this.tasksEl = tasksSection.createDiv({ cls: "aceto-mm-open-items-list" });
     this.registerEvent(this.app.workspace.on("active-leaf-change", () => this.refreshHeader()));
     this.registerEvent(this.app.workspace.on("file-open", () => this.refreshHeader()));
     this.registerEvent(this.app.metadataCache.on("changed", (file) => {
@@ -194,7 +199,7 @@ var MeetingModeView = class extends import_obsidian.ItemView {
     this.refreshOwner();
     this.refreshCounters();
   }
-  refreshCounters() {
+  async refreshCounters() {
     var _a;
     this.countersEl.empty();
     if (!this.plugin.settings.meetingModeShowCounters) return;
@@ -211,6 +216,21 @@ var MeetingModeView = class extends import_obsidian.ItemView {
         counterEl.addEventListener("click", () => this.highlightRecordsOfType(type));
       }
     }
+    const taskCount = file ? this.countOpenTaskLines(await this.app.vault.cachedRead(file)) : 0;
+    const taskCounterEl = this.countersEl.createEl("span", { cls: "aceto-mm-counter", text: `Tasks: ${taskCount}` });
+    if (taskCount > 0) {
+      taskCounterEl.addClass("is-clickable");
+      taskCounterEl.addEventListener("click", () => this.highlightOpenTasksInEditor());
+    }
+  }
+  countOpenTaskLines(content) {
+    const pattern = /^\s*[-*+]\s*\[(.)\]/;
+    let count = 0;
+    for (const line of content.split("\n")) {
+      const match = line.match(pattern);
+      if (match && !/[xX]/.test(match[1])) count++;
+    }
+    return count;
   }
   findActiveMarkdownLeaf(file) {
     return this.app.workspace.getLeavesOfType("markdown").find((leaf) => {
@@ -218,23 +238,44 @@ var MeetingModeView = class extends import_obsidian.ItemView {
       return ((_b = (_a = leaf.view) == null ? void 0 : _a.file) == null ? void 0 : _b.path) === file.path;
     }) || null;
   }
-  highlightRecordsOfType(typeKey) {
+  dispatchLineHighlight(file, lineNumbers) {
     var _a;
-    const file = this.activeSourceFile;
-    if (!file) return;
     const leaf = this.findActiveMarkdownLeaf(file);
     const markdownView = (leaf == null ? void 0 : leaf.view) instanceof import_obsidian.MarkdownView ? leaf.view : null;
     const cm = (_a = markdownView == null ? void 0 : markdownView.editor) == null ? void 0 : _a.cm;
     if (!leaf || !markdownView || !cm) return;
     this.app.workspace.revealLeaf(leaf);
-    const content = markdownView.editor.getValue();
-    const lineNumbers = this.plugin.findAllSourceLineNumbers(content, typeKey).map((i) => i + 1);
     cm.dispatch({ effects: setHighlightLines.of(lineNumbers) });
     if (this.highlightClearTimer !== null) window.clearTimeout(this.highlightClearTimer);
     this.highlightClearTimer = window.setTimeout(() => {
       cm.dispatch({ effects: setHighlightLines.of([]) });
       this.highlightClearTimer = null;
     }, 4e3);
+  }
+  highlightRecordsOfType(typeKey) {
+    const file = this.activeSourceFile;
+    if (!file) return;
+    const leaf = this.findActiveMarkdownLeaf(file);
+    const markdownView = (leaf == null ? void 0 : leaf.view) instanceof import_obsidian.MarkdownView ? leaf.view : null;
+    if (!markdownView) return;
+    const content = markdownView.editor.getValue();
+    const lineNumbers = this.plugin.findAllSourceLineNumbers(content, typeKey).map((i) => i + 1);
+    this.dispatchLineHighlight(file, lineNumbers);
+  }
+  highlightOpenTasksInEditor() {
+    const file = this.activeSourceFile;
+    if (!file) return;
+    const leaf = this.findActiveMarkdownLeaf(file);
+    const markdownView = (leaf == null ? void 0 : leaf.view) instanceof import_obsidian.MarkdownView ? leaf.view : null;
+    if (!markdownView) return;
+    const content = markdownView.editor.getValue();
+    const pattern = /^\s*[-*+]\s*\[(.)\]/;
+    const lineNumbers = [];
+    content.split("\n").forEach((line, index) => {
+      const match = line.match(pattern);
+      if (match && !/[xX]/.test(match[1])) lineNumbers.push(index + 1);
+    });
+    this.dispatchLineHighlight(file, lineNumbers);
   }
   async handleCaptureSubmit() {
     const raw = this.captureInputEl.value;
@@ -326,6 +367,7 @@ var MeetingModeView = class extends import_obsidian.ItemView {
         text: "No owner detected \u2014 include [[Person]] in the capture line"
       });
       this.renderOpenItems();
+      this.renderTasks();
       return;
     }
     const select = this.ownerSectionEl.createEl("select", { cls: "aceto-mm-owner-select" });
@@ -349,8 +391,10 @@ var MeetingModeView = class extends import_obsidian.ItemView {
         void this.plugin.persist();
       }
       this.renderOpenItems();
+      this.renderTasks();
     });
     this.renderOpenItems();
+    this.renderTasks();
   }
   queryOpenItems() {
     var _a;
@@ -432,18 +476,84 @@ var MeetingModeView = class extends import_obsidian.ItemView {
     this.renderOpenItems();
     this.refreshCounters();
   }
+  openOrReuseLeaf(file) {
+    return this.findActiveMarkdownLeaf(file) || this.app.workspace.getLeaf("tab");
+  }
   async openSourceForItem(row) {
     const sourceFile = this.app.vault.getAbstractFileByPath(row.sourcePath);
     if (!(sourceFile instanceof import_obsidian.TFile)) return;
     const typeKey = this.plugin.recordTypeKeyForTypeName(row.type);
     const content = await this.app.vault.cachedRead(sourceFile);
     const line = this.plugin.findSourceLineNumber(content, typeKey, row.sentence);
-    const leaf = this.app.workspace.getLeaf();
+    const leaf = this.openOrReuseLeaf(sourceFile);
+    this.app.workspace.revealLeaf(leaf);
     if (line >= 0) {
       await leaf.openFile(sourceFile, { eState: { line, focus: true } });
     } else {
       await leaf.openFile(sourceFile);
+      new import_obsidian.Notice("Couldn't find the exact matching line \u2014 the record note may be out of sync with the source. Try syncing this note.");
     }
+  }
+  async queryPersonalTasks() {
+    const effectiveOwner = this.personSearchOwner || this.currentOwner;
+    const rows = [];
+    const checkboxPattern = /^\s*[-*+]\s*\[(.)\]/;
+    for (const file of this.app.vault.getMarkdownFiles()) {
+      if (!this.plugin.shouldProcess(file)) continue;
+      const content = await this.app.vault.cachedRead(file);
+      const lines = content.split("\n");
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        const match = line.match(checkboxPattern);
+        if (!match || /[xX]/.test(match[1])) continue;
+        if (effectiveOwner) {
+          const hasOwnerLink = this.plugin.parseWikiLinks(line).some((link) => {
+            var _a;
+            return ((_a = this.plugin.resolvePersonLink(link, file)) == null ? void 0 : _a.path) === effectiveOwner.path;
+          });
+          if (!hasOwnerLink) continue;
+        }
+        rows.push({
+          file,
+          lineIndex: i,
+          rawLine: line,
+          text: line.replace(checkboxPattern, "").trim()
+        });
+      }
+    }
+    return rows;
+  }
+  async renderTasks() {
+    if (!this.tasksEl) return;
+    const rows = await this.queryPersonalTasks();
+    this.tasksEl.empty();
+    if (!rows.length) {
+      this.tasksEl.createEl("div", { cls: "aceto-mm-open-items-empty", text: "No open tasks." });
+      return;
+    }
+    for (const row of rows) {
+      const rowEl = this.tasksEl.createDiv({ cls: "aceto-mm-open-item" });
+      const checkbox = rowEl.createEl("input", { attr: { type: "checkbox" } });
+      checkbox.addEventListener("change", () => void this.toggleTask(row));
+      const text = rowEl.createEl("span", { cls: "aceto-mm-open-item-text", text: row.text });
+      text.addEventListener("click", () => void this.openTaskSource(row));
+    }
+  }
+  async toggleTask(row) {
+    const content = await this.app.vault.read(row.file);
+    const lines = content.split("\n");
+    if (lines[row.lineIndex] !== row.rawLine) {
+      await this.renderTasks();
+      return;
+    }
+    lines[row.lineIndex] = row.rawLine.replace(/^(\s*[-*+]\s*)\[.\]/, (_match, prefix) => `${prefix}[x]`);
+    await this.app.vault.modify(row.file, lines.join("\n"));
+    await this.renderTasks();
+  }
+  async openTaskSource(row) {
+    const leaf = this.openOrReuseLeaf(row.file);
+    this.app.workspace.revealLeaf(leaf);
+    await leaf.openFile(row.file, { eState: { line: row.lineIndex, focus: true } });
   }
 };
 
@@ -1021,13 +1131,16 @@ var ACE2XKnowledgeOSPlugin = class extends import_obsidian3.Plugin {
     const canonical = this.canonicalRecordText(sentence);
     const lines = String(content || "").split("\n");
     const pattern = new RegExp(`^(\\s*(?:[-*+]\\s*)?(${RECORD_TYPE_PATTERN})::\\s*)(.+?)(\\s*)$`, "i");
+    const candidates = [];
     for (let i = 0; i < lines.length; i++) {
       const match = lines[i].match(pattern);
       if (!match || match[2].toLowerCase() !== typeKey) continue;
-      const parsed = this.parseInlineStatus(match[3]);
-      if (this.canonicalRecordText(parsed.text) === canonical) return i;
+      const lineCanonical = this.canonicalRecordText(this.parseInlineStatus(match[3]).text);
+      if (lineCanonical === canonical) return i;
+      candidates.push({ index: i, canonical: lineCanonical });
     }
-    return -1;
+    const prefixMatch = candidates.find((c) => c.canonical.startsWith(canonical) || canonical.startsWith(c.canonical));
+    return prefixMatch ? prefixMatch.index : -1;
   }
   async completeRecord(recordFile) {
     await this.app.fileManager.processFrontMatter(recordFile, (fm) => {
@@ -1257,7 +1370,8 @@ var ACE2XKnowledgeOSPlugin = class extends import_obsidian3.Plugin {
     const scanContent = this.stripIgnoredContent(scoped);
     const tags = this.extractTags(scanContent);
     const people = this.extractResolvedPeople(scoped, file);
-    const unresolvedLinks = [...new Set(records.flatMap((r) => r.unresolvedLinks))].sort();
+    const taskUnresolvedLinks = this.extractTaskUnresolvedLinks(scoped, file);
+    const unresolvedLinks = [.../* @__PURE__ */ new Set([...records.flatMap((r) => r.unresolvedLinks), ...taskUnresolvedLinks])].sort();
     const affectedPersonPaths = [...new Set(records.flatMap((r) => r.people.map((p) => p.path)))];
     const signature = JSON.stringify({
       tags,
@@ -1408,6 +1522,17 @@ var ACE2XKnowledgeOSPlugin = class extends import_obsidian3.Plugin {
       if (target) links.push({ target, alias: (alias == null ? void 0 : alias.trim()) || null, raw: match[0] });
     }
     return links;
+  }
+  extractTaskUnresolvedLinks(text, sourceFile) {
+    const unresolved = [];
+    for (const line of text.split("\n")) {
+      if (!/^\s*[-*+]\s*\[.\]/.test(line)) continue;
+      for (const link of this.parseWikiLinks(line)) {
+        const destination = this.app.metadataCache.getFirstLinkpathDest(link.target, sourceFile.path);
+        if (!destination) unresolved.push(link.target);
+      }
+    }
+    return unresolved;
   }
   isPersonFile(file) {
     var _a, _b;
@@ -1931,6 +2056,17 @@ var ACE2XKnowledgeOSSettingTab = class extends import_obsidian3.PluginSettingTab
       this.plugin.settings.autoSync = value;
       await this.plugin.persist();
     }));
+    new import_obsidian3.Setting(containerEl).setName("Sync delay").setDesc("How long to wait after you stop typing before Automatic sync runs, and before a Base status edit syncs back to the source note. Reload the plugin after changing this for it to take effect.").addDropdown((dropdown) => {
+      const presets = { "1800": "1.8 seconds", "300000": "5 minutes", "900000": "15 minutes" };
+      for (const [ms, label] of Object.entries(presets)) dropdown.addOption(ms, label);
+      const current = String(this.plugin.settings.debounceMs);
+      if (!(current in presets)) dropdown.addOption(current, `${current} ms (custom)`);
+      dropdown.setValue(current);
+      dropdown.onChange(async (value) => {
+        this.plugin.settings.debounceMs = parseInt(value, 10);
+        await this.plugin.persist();
+      });
+    });
     const folderPaths = this.plugin.vaultFolderPaths();
     new import_obsidian3.Setting(containerEl).setName("Auto-detect folders").setDesc("Find likely People, Executive, Decisions, Risks, Issues and Dashboard folders when a configured location is missing.").addButton((button) => button.setButtonText("Detect folders").onClick(async () => {
       const changed = await this.plugin.autoDetectFolders();
@@ -1957,7 +2093,7 @@ var ACE2XKnowledgeOSSettingTab = class extends import_obsidian3.PluginSettingTab
       this.plugin.settings.dashboardBaseName = value.trim().replace(/\.base$/i, "") || "00.\u{1F39B}\uFE0F Master";
       await this.plugin.persist();
     }));
-    new import_obsidian3.Setting(containerEl).setName("Create unresolved links as people").setDesc("Off by default. When enabled, unresolved links inside d::, r::, i:: or e:: records create person pages.").addToggle((toggle) => toggle.setValue(this.plugin.settings.autoCreatePeople).onChange(async (value) => {
+    new import_obsidian3.Setting(containerEl).setName("Create unresolved links as people").setDesc("Off by default. When enabled, unresolved links inside d::, r::, i::, e::, a:: records or - [ ] task lines create person pages.").addToggle((toggle) => toggle.setValue(this.plugin.settings.autoCreatePeople).onChange(async (value) => {
       this.plugin.settings.autoCreatePeople = value;
       await this.plugin.persist();
     }));
@@ -2068,6 +2204,7 @@ var ACE2XKnowledgeOSSettingTab = class extends import_obsidian3.PluginSettingTab
     notes.createEl("p", { text: "On a line starting with d:: r:: i:: e:: a:: or a - [ ] task checkbox, typing [ offers a due:: suggestion. Selecting it opens a date picker and inserts [due:: YYYY-MM-DD]. On a d/r/i/e/a line the due date is parsed out of the sentence, synced to the record note's due field, and shown as a column in the dashboard Base; removing it from the source line clears it on the next sync. On a personal task line it is just plain text for your own reference \u2014 ACE2X does not sync personal tasks." });
     notes.createEl("p", { text: "The Tasks community plugin is not required. Checkboxes are native Obsidian markdown, and due dates are handled by ACE2X's own [due:: ] suggest above. If you were using Tasks' global query to list open tasks, use a Dataview query instead, for example: TASK WHERE !completed" });
     notes.createEl("p", { text: "Checking a - [ ] task checkbox appends [completed:: YYYY-MM-DD] to the end of the line automatically. Unchecking it removes the completed date again. This is plain text for your own reference; ACE2X does not sync personal tasks." });
+    notes.createEl("p", { text: `A [[Name]] link on a - [ ] task line is treated the same as one inside a d/r/i/e/a record for unresolved-link handling: if it doesn't resolve to an existing note, running a sync (with "Create unresolved links as people" enabled) creates a person page for it using the person template. The task line itself is still not synced or tracked as a record.` });
     notes.createEl("p", { text: "Editing, changing status, removing a person, or deleting a record updates every associated person page the next time the source note is synced." });
   }
 };
