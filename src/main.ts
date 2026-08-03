@@ -11,7 +11,7 @@ import {
   debounce
 } from "obsidian";
 import { MeetingModeView, VIEW_TYPE_MEETING_MODE } from "./meetingMode/view";
-import { highlightLinesField } from "./meetingMode/highlightExtension";
+import { highlightLinesPlugin } from "./meetingMode/highlightExtension";
 import { recordMarkerColors, recordMarkerHighlightPlugin } from "./meetingMode/markerColorExtension";
 import { highlightRecordMarkersInElement } from "./meetingMode/markerReadingViewProcessor";
 import { DueDateSuggest } from "./meetingMode/dueDateSuggest";
@@ -301,7 +301,7 @@ export default class ACE2XKnowledgeOSPlugin extends Plugin {
     }));
 
     this.registerView(VIEW_TYPE_MEETING_MODE, (leaf) => new MeetingModeView(leaf, this));
-    this.registerEditorExtension(highlightLinesField);
+    this.registerEditorExtension(highlightLinesPlugin);
     this.registerEditorExtension([
       recordMarkerColors.of(Object.keys(RECORD_TYPES).map((key) => ({ type: key, className: `aceto-type-marker-${key}` }))),
       recordMarkerHighlightPlugin

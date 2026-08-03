@@ -181,13 +181,16 @@ export class MeetingModeView extends ItemView {
 
   refreshHeader(): void {
     const file = this.resolveActiveSourceFile();
-    this.activeSourceFile = file;
-    if (!file) {
+    // Only overwrite activeSourceFile when a real markdown note is active. Focusing the
+    // panel itself (or any other non-file view) makes getActiveFile() return null — that's
+    // not "no meeting note," it just means focus moved to us. Keep the last known note sticky.
+    if (file) this.activeSourceFile = file;
+    if (!this.activeSourceFile) {
       this.headerTitleEl.setText("No active meeting note");
       this.headerDateEl.setText("");
     } else {
-      this.headerTitleEl.setText(file.basename);
-      this.headerDateEl.setText(this.plugin.getSourceDate(file));
+      this.headerTitleEl.setText(this.activeSourceFile.basename);
+      this.headerDateEl.setText(this.plugin.getSourceDate(this.activeSourceFile));
     }
     this.refreshOwner();
     this.refreshCounters();

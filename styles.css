@@ -30,7 +30,7 @@
 .aceto-mm-counter { background: var(--background-secondary); border-radius: 6px; padding: 0.25rem 0.6rem; font-size: 0.85em; }
 .aceto-mm-counter.is-clickable { cursor: pointer; }
 .aceto-mm-counter.is-clickable:hover { background: var(--background-modifier-hover); }
-.aceto-mm-line-highlight { background-color: rgba(255, 214, 0, 0.35); transition: background-color 0.3s ease; }
+.aceto-mm-line-highlight { background-color: rgba(255, 214, 0, 0.35) !important; transition: background-color 0.3s ease; }
 
 .aceto-type-marker-a,
 .aceto-type-marker-r,

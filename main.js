@@ -55,31 +55,34 @@ var import_state = require("@codemirror/state");
 var import_view = require("@codemirror/view");
 var setHighlightLines = import_state.StateEffect.define();
 var highlightLineDeco = import_view.Decoration.line({ attributes: { class: "aceto-mm-line-highlight" } });
-var highlightLinesField = import_state.StateField.define({
-  create() {
-    return import_view.Decoration.none;
-  },
-  update(deco, tr) {
-    deco = deco.map(tr.changes);
-    for (const effect of tr.effects) {
-      if (!effect.is(setHighlightLines)) continue;
-      const lineNumbers = effect.value;
-      if (!lineNumbers.length) {
-        deco = import_view.Decoration.none;
-        continue;
-      }
-      const ranges = [];
-      for (const lineNumber of lineNumbers) {
-        if (lineNumber < 1 || lineNumber > tr.state.doc.lines) continue;
-        const line = tr.state.doc.line(lineNumber);
-        ranges.push(highlightLineDeco.range(line.from));
-      }
-      deco = import_view.Decoration.set(ranges, true);
+var highlightLinesPlugin = import_view.ViewPlugin.fromClass(
+  class {
+    constructor() {
+      this.decorations = import_view.Decoration.none;
     }
-    return deco;
+    update(update) {
+      if (update.docChanged) this.decorations = this.decorations.map(update.changes);
+      for (const tr of update.transactions) {
+        for (const effect of tr.effects) {
+          if (!effect.is(setHighlightLines)) continue;
+          const lineNumbers = effect.value;
+          if (!lineNumbers.length) {
+            this.decorations = import_view.Decoration.none;
+            continue;
+          }
+          const ranges = [];
+          for (const lineNumber of lineNumbers) {
+            if (lineNumber < 1 || lineNumber > update.state.doc.lines) continue;
+            const line = update.state.doc.line(lineNumber);
+            ranges.push(highlightLineDeco.range(line.from));
+          }
+          this.decorations = import_view.Decoration.set(ranges, true);
+        }
+      }
+    }
   },
-  provide: (field) => import_view.EditorView.decorations.from(field)
-});
+  { decorations: (v) => v.decorations }
+);
 
 // src/meetingMode/view.ts
 var VIEW_TYPE_MEETING_MODE = "ace2x-meeting-mode";
@@ -188,13 +191,13 @@ var MeetingModeView = class extends import_obsidian.ItemView {
   }
   refreshHeader() {
     const file = this.resolveActiveSourceFile();
-    this.activeSourceFile = file;
-    if (!file) {
+    if (file) this.activeSourceFile = file;
+    if (!this.activeSourceFile) {
       this.headerTitleEl.setText("No active meeting note");
       this.headerDateEl.setText("");
     } else {
-      this.headerTitleEl.setText(file.basename);
-      this.headerDateEl.setText(this.plugin.getSourceDate(file));
+      this.headerTitleEl.setText(this.activeSourceFile.basename);
+      this.headerDateEl.setText(this.plugin.getSourceDate(this.activeSourceFile));
     }
     this.refreshOwner();
     this.refreshCounters();
@@ -982,7 +985,7 @@ var ACE2XKnowledgeOSPlugin = class extends import_obsidian3.Plugin {
       }
     }));
     this.registerView(VIEW_TYPE_MEETING_MODE, (leaf) => new MeetingModeView(leaf, this));
-    this.registerEditorExtension(highlightLinesField);
+    this.registerEditorExtension(highlightLinesPlugin);
     this.registerEditorExtension([
       recordMarkerColors.of(Object.keys(RECORD_TYPES).map((key) => ({ type: key, className: `aceto-type-marker-${key}` }))),
       recordMarkerHighlightPlugin
