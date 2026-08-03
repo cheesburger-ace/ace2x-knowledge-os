@@ -86,6 +86,12 @@ var highlightLinesPlugin = import_view.ViewPlugin.fromClass(
 
 // src/meetingMode/view.ts
 var VIEW_TYPE_MEETING_MODE = "ace2x-meeting-mode";
+function compareByDue(a, b, fallback) {
+  if (a.due && b.due) return a.due.localeCompare(b.due) || fallback(a, b);
+  if (a.due) return -1;
+  if (b.due) return 1;
+  return fallback(a, b);
+}
 function parseWikilinkString(raw) {
   const match = String(raw || "").trim().match(/^\[\[([^\]]+)\]\]$/);
   if (!match) return null;
@@ -100,6 +106,8 @@ var MeetingModeView = class extends import_obsidian.ItemView {
     this.activeSourceFile = null;
     this.currentOwner = null;
     this.personSearchOwner = null;
+    this.deptSearchPeople = null;
+    this.deptSearchLabel = "";
     this.highlightClearTimer = null;
     this.plugin = plugin;
   }
@@ -148,6 +156,34 @@ var MeetingModeView = class extends import_obsidian.ItemView {
     this.personSearchEl.addEventListener("input", () => {
       const value = this.personSearchEl.value.trim();
       this.personSearchOwner = value ? this.resolvePersonByName(value) : null;
+      if (this.personSearchOwner) {
+        this.deptSearchEl.value = "";
+        this.deptSearchPeople = null;
+        this.deptSearchLabel = "";
+      }
+      this.renderOpenItems();
+      this.renderTasks();
+    });
+    this.deptSearchEl = openItemsSection.createEl("input", {
+      cls: "aceto-mm-open-items-search",
+      attr: { type: "text", placeholder: "Search by dept (all open items, vault-wide)...", list: "aceto-mm-dept-datalist" }
+    });
+    const deptDatalist = openItemsSection.createEl("datalist", { attr: { id: "aceto-mm-dept-datalist" } });
+    for (const dept of this.plugin.personDepartments()) {
+      deptDatalist.createEl("option", { attr: { value: dept } });
+    }
+    this.deptSearchEl.addEventListener("input", () => {
+      const value = this.deptSearchEl.value.trim();
+      const matchedDept = this.plugin.personDepartments().find((d) => d.toLowerCase() === value.toLowerCase());
+      if (matchedDept) {
+        this.deptSearchPeople = this.plugin.personPathsByDepartment(matchedDept).map((path) => this.personEntryFromPath(path)).filter((p) => Boolean(p));
+        this.deptSearchLabel = matchedDept;
+        this.personSearchEl.value = "";
+        this.personSearchOwner = null;
+      } else {
+        this.deptSearchPeople = null;
+        this.deptSearchLabel = "";
+      }
       this.renderOpenItems();
       this.renderTasks();
     });
@@ -157,6 +193,9 @@ var MeetingModeView = class extends import_obsidian.ItemView {
     clearButton.addEventListener("click", () => {
       this.personSearchEl.value = "";
       this.personSearchOwner = null;
+      this.deptSearchEl.value = "";
+      this.deptSearchPeople = null;
+      this.deptSearchLabel = "";
       this.renderOpenItems();
       this.renderTasks();
     });
@@ -399,9 +438,15 @@ var MeetingModeView = class extends import_obsidian.ItemView {
     this.renderOpenItems();
     this.renderTasks();
   }
+  effectiveOwnerPaths() {
+    if (this.deptSearchPeople) return this.deptSearchPeople.map((p) => p.path);
+    if (this.personSearchOwner) return [this.personSearchOwner.path];
+    if (this.currentOwner) return [this.currentOwner.path];
+    return null;
+  }
   queryOpenItems() {
     var _a;
-    const effectiveOwner = this.personSearchOwner || this.currentOwner;
+    const effectiveOwnerPaths = this.effectiveOwnerPaths();
     const folders = this.plugin.recordFolderPaths();
     const rows = [];
     for (const file of this.app.vault.getMarkdownFiles()) {
@@ -409,33 +454,38 @@ var MeetingModeView = class extends import_obsidian.ItemView {
       const fm = (_a = this.app.metadataCache.getFileCache(file)) == null ? void 0 : _a.frontmatter;
       if (!fm || !fm.record_id || !fm.source_path) continue;
       if (String(fm.status || "").toLowerCase() === "done") continue;
-      if (effectiveOwner) {
+      if (effectiveOwnerPaths) {
         const ownerPaths = this.frontmatterLinksToPeople(file, fm.owner).map((p) => p.path);
-        if (!ownerPaths.includes(effectiveOwner.path)) continue;
+        if (!ownerPaths.some((p) => effectiveOwnerPaths.includes(p))) continue;
       }
       rows.push({
         file,
         sentence: String(fm.sentence || file.basename),
         sourcePath: String(fm.source_path || ""),
-        type: String(fm.type || "")
+        type: String(fm.type || ""),
+        due: String(fm.due || "")
       });
     }
-    rows.sort((a, b) => a.sentence.localeCompare(b.sentence));
+    rows.sort((a, b) => compareByDue(a, b, (x, y) => x.sentence.localeCompare(y.sentence)));
     return rows;
   }
   renderOpenItems() {
-    var _a, _b, _c;
+    var _a, _b, _c, _d;
     if (!this.openItemsEl) return;
     this.openItemsEl.empty();
-    if (this.personSearchOwner) {
-      this.openItemsScopeEl.setText(`Vault-wide open items for ${this.personSearchOwner.basename}`);
+    const groupedScope = Boolean(this.personSearchOwner || this.deptSearchPeople);
+    if (this.deptSearchPeople) {
+      this.openItemsScopeEl.setText(`Vault-wide open items for ${this.deptSearchLabel} (${this.deptSearchPeople.length} people)`);
       (_a = this.openItemsScopeEl.parentElement) == null ? void 0 : _a.addClass("is-active");
+    } else if (this.personSearchOwner) {
+      this.openItemsScopeEl.setText(`Vault-wide open items for ${this.personSearchOwner.basename}`);
+      (_b = this.openItemsScopeEl.parentElement) == null ? void 0 : _b.addClass("is-active");
     } else if (this.currentOwner) {
       this.openItemsScopeEl.setText(`Open items for ${this.currentOwner.basename}`);
-      (_b = this.openItemsScopeEl.parentElement) == null ? void 0 : _b.removeClass("is-active");
+      (_c = this.openItemsScopeEl.parentElement) == null ? void 0 : _c.removeClass("is-active");
     } else {
       this.openItemsScopeEl.setText("All open items (vault-wide)");
-      (_c = this.openItemsScopeEl.parentElement) == null ? void 0 : _c.removeClass("is-active");
+      (_d = this.openItemsScopeEl.parentElement) == null ? void 0 : _d.removeClass("is-active");
     }
     const query = this.openItemsSearchEl.value.trim().toLowerCase();
     const rows = this.queryOpenItems().filter((row) => !query || row.sentence.toLowerCase().includes(query));
@@ -443,7 +493,7 @@ var MeetingModeView = class extends import_obsidian.ItemView {
       this.openItemsEl.createEl("div", { cls: "aceto-mm-open-items-empty", text: "No open items." });
       return;
     }
-    if (this.personSearchOwner) {
+    if (groupedScope) {
       this.renderOpenItemsGroupedByType(rows);
     } else {
       for (const row of rows) this.renderOpenItemRow(this.openItemsEl, row);
@@ -498,7 +548,7 @@ var MeetingModeView = class extends import_obsidian.ItemView {
     }
   }
   async queryPersonalTasks() {
-    const effectiveOwner = this.personSearchOwner || this.currentOwner;
+    const effectiveOwnerPaths = this.effectiveOwnerPaths();
     const rows = [];
     const checkboxPattern = /^\s*[-*+]\s*\[(.)\]/;
     for (const file of this.app.vault.getMarkdownFiles()) {
@@ -509,10 +559,10 @@ var MeetingModeView = class extends import_obsidian.ItemView {
         const line = lines[i];
         const match = line.match(checkboxPattern);
         if (!match || /[xX]/.test(match[1])) continue;
-        if (effectiveOwner) {
+        if (effectiveOwnerPaths) {
           const hasOwnerLink = this.plugin.parseWikiLinks(line).some((link) => {
             var _a;
-            return ((_a = this.plugin.resolvePersonLink(link, file)) == null ? void 0 : _a.path) === effectiveOwner.path;
+            return effectiveOwnerPaths.includes(((_a = this.plugin.resolvePersonLink(link, file)) == null ? void 0 : _a.path) || "");
           });
           if (!hasOwnerLink) continue;
         }
@@ -520,10 +570,12 @@ var MeetingModeView = class extends import_obsidian.ItemView {
           file,
           lineIndex: i,
           rawLine: line,
-          text: line.replace(checkboxPattern, "").trim()
+          text: line.replace(checkboxPattern, "").trim(),
+          due: this.plugin.extractDueDate(line)
         });
       }
     }
+    rows.sort((a, b) => compareByDue(a, b, (x, y) => x.text.localeCompare(y.text)));
     return rows;
   }
   async renderTasks() {
@@ -1154,6 +1206,28 @@ var ACE2XKnowledgeOSPlugin = class extends import_obsidian3.Plugin {
   }
   personFilePaths() {
     return this.app.vault.getMarkdownFiles().filter((file) => this.isPersonFile(file)).map((file) => file.path).sort((a, b) => a.localeCompare(b, void 0, { numeric: true, sensitivity: "base" }));
+  }
+  personDepartments() {
+    var _a, _b;
+    const values = /* @__PURE__ */ new Set();
+    for (const file of this.app.vault.getMarkdownFiles()) {
+      if (!this.isPersonFile(file)) continue;
+      const dept = (_b = (_a = this.app.metadataCache.getFileCache(file)) == null ? void 0 : _a.frontmatter) == null ? void 0 : _b.dept;
+      if (dept) values.add(String(dept).trim());
+    }
+    return [...values].sort((a, b) => a.localeCompare(b, void 0, { sensitivity: "base" }));
+  }
+  personPathsByDepartment(dept) {
+    var _a, _b;
+    const target = String(dept || "").trim().toLowerCase();
+    if (!target) return [];
+    const paths = [];
+    for (const file of this.app.vault.getMarkdownFiles()) {
+      if (!this.isPersonFile(file)) continue;
+      const value = String(((_b = (_a = this.app.metadataCache.getFileCache(file)) == null ? void 0 : _a.frontmatter) == null ? void 0 : _b.dept) || "").trim().toLowerCase();
+      if (value === target) paths.push(file.path);
+    }
+    return paths;
   }
   vaultFolderPaths() {
     return this.app.vault.getAllLoadedFiles().filter((entry) => entry instanceof import_obsidian3.TFolder).map((folder) => (0, import_obsidian3.normalizePath)(folder.path)).filter(Boolean).sort((a, b) => a.localeCompare(b, void 0, { numeric: true, sensitivity: "base" }));

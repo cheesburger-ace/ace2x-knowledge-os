@@ -37,6 +37,16 @@
 
 A flush-on-app-close feature (sync any pending edit immediately when Obsidian quits) was attempted and reverted — Electron doesn't give plugins a reliable window to finish async file writes between quit and process exit, so `onunload` couldn't be made to complete the flush in practice. If a delay-worth of edits sits unsynced, run "Sync entire vault" or "Sync current note" before closing Obsidian.
 
+- Open Items and Tasks in the Meeting Mode panel are now sorted by due date (soonest first); items with no due date sort after those that have one, keeping their previous alphabetical order among themselves.
+
+### Fixed
+
+- The counter-click "highlight matching lines" feature was silently a no-op in some environments: it was built on a CodeMirror `StateField`, which wasn't consistently included in the active editor state, so the dispatched highlight effect had nowhere to land. Rewritten as a `ViewPlugin` (the same mechanism the working marker-color feature already used), which resolved it.
+
+### Added
+
+- Added a "Search by dept" input to Open Items, alongside the existing "Search by person" one — resolves to every Person note sharing that `dept` frontmatter value and scopes/groups Open Items and Tasks the same way person search does. Selecting a department clears an active person search and vice versa (mutually exclusive, since they're alternate ways to define the same "who" scope); the Clear button resets both.
+
 ## [0.5.0] - 2026-07-19
 
 ### Added

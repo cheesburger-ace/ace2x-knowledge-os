@@ -518,6 +518,28 @@ export default class ACE2XKnowledgeOSPlugin extends Plugin {
       .sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" }));
   }
 
+  personDepartments() {
+    const values = new Set();
+    for (const file of this.app.vault.getMarkdownFiles()) {
+      if (!this.isPersonFile(file)) continue;
+      const dept = this.app.metadataCache.getFileCache(file)?.frontmatter?.dept;
+      if (dept) values.add(String(dept).trim());
+    }
+    return [...values].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+  }
+
+  personPathsByDepartment(dept) {
+    const target = String(dept || "").trim().toLowerCase();
+    if (!target) return [];
+    const paths = [];
+    for (const file of this.app.vault.getMarkdownFiles()) {
+      if (!this.isPersonFile(file)) continue;
+      const value = String(this.app.metadataCache.getFileCache(file)?.frontmatter?.dept || "").trim().toLowerCase();
+      if (value === target) paths.push(file.path);
+    }
+    return paths;
+  }
+
   vaultFolderPaths() {
     return this.app.vault.getAllLoadedFiles()
       .filter((entry) => entry instanceof TFolder)

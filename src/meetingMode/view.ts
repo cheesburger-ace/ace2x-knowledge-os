@@ -30,6 +30,9 @@ export interface MeetingModePlugin {
   findAllSourceLineNumbers(content: string, typeKey: string | null): number[];
   personFilePaths(): string[];
   shouldProcess(file: TFile): boolean;
+  extractDueDate(text: string): string;
+  personDepartments(): string[];
+  personPathsByDepartment(dept: string): string[];
 }
 
 interface OpenItemRow {
@@ -37,6 +40,7 @@ interface OpenItemRow {
   sentence: string;
   sourcePath: string;
   type: string;
+  due: string;
 }
 
 interface TaskRow {
@@ -44,6 +48,14 @@ interface TaskRow {
   lineIndex: number;
   rawLine: string;
   text: string;
+  due: string;
+}
+
+function compareByDue<T extends { due: string }>(a: T, b: T, fallback: (a: T, b: T) => number): number {
+  if (a.due && b.due) return a.due.localeCompare(b.due) || fallback(a, b);
+  if (a.due) return -1;
+  if (b.due) return 1;
+  return fallback(a, b);
 }
 
 function parseWikilinkString(raw: string): { target: string; alias: string | null } | null {
@@ -63,6 +75,7 @@ export class MeetingModeView extends ItemView {
   captureInputEl!: HTMLInputElement;
   countersEl!: HTMLElement;
   personSearchEl!: HTMLInputElement;
+  deptSearchEl!: HTMLInputElement;
   openItemsScopeEl!: HTMLElement;
   openItemsSearchEl!: HTMLInputElement;
   openItemsEl!: HTMLElement;
@@ -70,6 +83,8 @@ export class MeetingModeView extends ItemView {
   activeSourceFile: TFile | null = null;
   currentOwner: PersonEntry | null = null;
   personSearchOwner: PersonEntry | null = null;
+  deptSearchPeople: PersonEntry[] | null = null;
+  deptSearchLabel: string = "";
   highlightClearTimer: number | null = null;
 
   constructor(leaf: WorkspaceLeaf, plugin: MeetingModePlugin) {
@@ -130,6 +145,37 @@ export class MeetingModeView extends ItemView {
     this.personSearchEl.addEventListener("input", () => {
       const value = this.personSearchEl.value.trim();
       this.personSearchOwner = value ? this.resolvePersonByName(value) : null;
+      if (this.personSearchOwner) {
+        this.deptSearchEl.value = "";
+        this.deptSearchPeople = null;
+        this.deptSearchLabel = "";
+      }
+      this.renderOpenItems();
+      this.renderTasks();
+    });
+
+    this.deptSearchEl = openItemsSection.createEl("input", {
+      cls: "aceto-mm-open-items-search",
+      attr: { type: "text", placeholder: "Search by dept (all open items, vault-wide)...", list: "aceto-mm-dept-datalist" }
+    });
+    const deptDatalist = openItemsSection.createEl("datalist", { attr: { id: "aceto-mm-dept-datalist" } });
+    for (const dept of this.plugin.personDepartments()) {
+      deptDatalist.createEl("option", { attr: { value: dept } });
+    }
+    this.deptSearchEl.addEventListener("input", () => {
+      const value = this.deptSearchEl.value.trim();
+      const matchedDept = this.plugin.personDepartments().find((d) => d.toLowerCase() === value.toLowerCase());
+      if (matchedDept) {
+        this.deptSearchPeople = this.plugin.personPathsByDepartment(matchedDept)
+          .map((path) => this.personEntryFromPath(path))
+          .filter((p): p is PersonEntry => Boolean(p));
+        this.deptSearchLabel = matchedDept;
+        this.personSearchEl.value = "";
+        this.personSearchOwner = null;
+      } else {
+        this.deptSearchPeople = null;
+        this.deptSearchLabel = "";
+      }
       this.renderOpenItems();
       this.renderTasks();
     });
@@ -140,6 +186,9 @@ export class MeetingModeView extends ItemView {
     clearButton.addEventListener("click", () => {
       this.personSearchEl.value = "";
       this.personSearchOwner = null;
+      this.deptSearchEl.value = "";
+      this.deptSearchPeople = null;
+      this.deptSearchLabel = "";
       this.renderOpenItems();
       this.renderTasks();
     });
@@ -418,8 +467,15 @@ export class MeetingModeView extends ItemView {
     this.renderTasks();
   }
 
+  effectiveOwnerPaths(): string[] | null {
+    if (this.deptSearchPeople) return this.deptSearchPeople.map((p) => p.path);
+    if (this.personSearchOwner) return [this.personSearchOwner.path];
+    if (this.currentOwner) return [this.currentOwner.path];
+    return null;
+  }
+
   queryOpenItems(): OpenItemRow[] {
-    const effectiveOwner = this.personSearchOwner || this.currentOwner;
+    const effectiveOwnerPaths = this.effectiveOwnerPaths();
     const folders = this.plugin.recordFolderPaths();
     const rows: OpenItemRow[] = [];
     for (const file of this.app.vault.getMarkdownFiles()) {
@@ -427,18 +483,19 @@ export class MeetingModeView extends ItemView {
       const fm = this.app.metadataCache.getFileCache(file)?.frontmatter;
       if (!fm || !fm.record_id || !fm.source_path) continue;
       if (String(fm.status || "").toLowerCase() === "done") continue;
-      if (effectiveOwner) {
+      if (effectiveOwnerPaths) {
         const ownerPaths = this.frontmatterLinksToPeople(file, fm.owner).map((p) => p.path);
-        if (!ownerPaths.includes(effectiveOwner.path)) continue;
+        if (!ownerPaths.some((p) => effectiveOwnerPaths.includes(p))) continue;
       }
       rows.push({
         file,
         sentence: String(fm.sentence || file.basename),
         sourcePath: String(fm.source_path || ""),
-        type: String(fm.type || "")
+        type: String(fm.type || ""),
+        due: String(fm.due || "")
       });
     }
-    rows.sort((a, b) => a.sentence.localeCompare(b.sentence));
+    rows.sort((a, b) => compareByDue(a, b, (x, y) => x.sentence.localeCompare(y.sentence)));
     return rows;
   }
 
@@ -446,7 +503,11 @@ export class MeetingModeView extends ItemView {
     if (!this.openItemsEl) return;
     this.openItemsEl.empty();
 
-    if (this.personSearchOwner) {
+    const groupedScope = Boolean(this.personSearchOwner || this.deptSearchPeople);
+    if (this.deptSearchPeople) {
+      this.openItemsScopeEl.setText(`Vault-wide open items for ${this.deptSearchLabel} (${this.deptSearchPeople.length} people)`);
+      this.openItemsScopeEl.parentElement?.addClass("is-active");
+    } else if (this.personSearchOwner) {
       this.openItemsScopeEl.setText(`Vault-wide open items for ${this.personSearchOwner.basename}`);
       this.openItemsScopeEl.parentElement?.addClass("is-active");
     } else if (this.currentOwner) {
@@ -465,7 +526,7 @@ export class MeetingModeView extends ItemView {
       return;
     }
 
-    if (this.personSearchOwner) {
+    if (groupedScope) {
       this.renderOpenItemsGroupedByType(rows);
     } else {
       for (const row of rows) this.renderOpenItemRow(this.openItemsEl, row);
@@ -526,7 +587,7 @@ export class MeetingModeView extends ItemView {
   }
 
   async queryPersonalTasks(): Promise<TaskRow[]> {
-    const effectiveOwner = this.personSearchOwner || this.currentOwner;
+    const effectiveOwnerPaths = this.effectiveOwnerPaths();
     const rows: TaskRow[] = [];
     const checkboxPattern = /^\s*[-*+]\s*\[(.)\]/;
 
@@ -538,20 +599,22 @@ export class MeetingModeView extends ItemView {
         const line = lines[i];
         const match = line.match(checkboxPattern);
         if (!match || /[xX]/.test(match[1])) continue;
-        if (effectiveOwner) {
+        if (effectiveOwnerPaths) {
           const hasOwnerLink = this.plugin
             .parseWikiLinks(line)
-            .some((link) => this.plugin.resolvePersonLink(link, file)?.path === effectiveOwner.path);
+            .some((link) => effectiveOwnerPaths.includes(this.plugin.resolvePersonLink(link, file)?.path || ""));
           if (!hasOwnerLink) continue;
         }
         rows.push({
           file,
           lineIndex: i,
           rawLine: line,
-          text: line.replace(checkboxPattern, "").trim()
+          text: line.replace(checkboxPattern, "").trim(),
+          due: this.plugin.extractDueDate(line)
         });
       }
     }
+    rows.sort((a, b) => compareByDue(a, b, (x, y) => x.text.localeCompare(y.text)));
     return rows;
   }
 
