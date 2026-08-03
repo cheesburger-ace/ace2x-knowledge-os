@@ -24,7 +24,7 @@ __export(main_exports, {
   default: () => ACE2XKnowledgeOSPlugin
 });
 module.exports = __toCommonJS(main_exports);
-var import_obsidian2 = require("obsidian");
+var import_obsidian3 = require("obsidian");
 
 // src/meetingMode/view.ts
 var import_obsidian = require("obsidian");
@@ -533,6 +533,90 @@ function highlightRecordMarkersInElement(el, typeKeys) {
   }
 }
 
+// src/meetingMode/dueDateSuggest.ts
+var import_obsidian2 = require("obsidian");
+var INSERT_TEXT = "[due:: ";
+var DueDateSuggest = class extends import_obsidian2.EditorSuggest {
+  constructor(app, typeKeys) {
+    super(app);
+    this.typeKeys = typeKeys;
+  }
+  onTrigger(cursor, editor, _file) {
+    if (!this.typeKeys.length) return null;
+    const line = editor.getLine(cursor.line);
+    const beforeCursor = line.slice(0, cursor.ch);
+    const linePattern = new RegExp(`^\\s*(?:[-*+]\\s*)?(${this.typeKeys.join("|")})::`, "i");
+    if (!linePattern.test(line)) return null;
+    const triggerMatch = beforeCursor.match(/\[(\w*)$/);
+    if (!triggerMatch) return null;
+    return {
+      start: { line: cursor.line, ch: cursor.ch - triggerMatch[0].length },
+      end: cursor,
+      query: triggerMatch[1]
+    };
+  }
+  getSuggestions(context) {
+    const query = context.query.toLowerCase();
+    return "due".startsWith(query) ? [{ label: "due::" }] : [];
+  }
+  renderSuggestion(suggestion, el) {
+    el.createEl("div", { text: suggestion.label });
+    el.createEl("small", { text: "Insert a due date", cls: "aceto-suggest-desc" });
+  }
+  selectSuggestion(_suggestion) {
+    const context = this.context;
+    if (!context) return;
+    const editor = context.editor;
+    editor.replaceRange(INSERT_TEXT, context.start, context.end);
+    const insertPos = { line: context.start.line, ch: context.start.ch + INSERT_TEXT.length };
+    editor.setCursor(insertPos);
+    new DueDateModal(this.app, (isoDate) => {
+      if (!isoDate) return;
+      editor.replaceRange(`${isoDate}]`, insertPos, insertPos);
+      editor.setCursor({ line: insertPos.line, ch: insertPos.ch + isoDate.length + 1 });
+      editor.focus();
+    }).open();
+  }
+};
+var DueDateModal = class extends import_obsidian2.Modal {
+  constructor(app, onSubmit) {
+    super(app);
+    this.onSubmit = onSubmit;
+  }
+  onOpen() {
+    const { contentEl } = this;
+    contentEl.createEl("h3", { text: "Insert due date" });
+    const input = contentEl.createEl("input", { attr: { type: "date" } });
+    input.focus();
+    const quickRow = contentEl.createDiv({ cls: "aceto-due-quick-row" });
+    const addQuick = (label, days) => {
+      const btn = quickRow.createEl("button", { text: label });
+      btn.addEventListener("click", () => {
+        const target = /* @__PURE__ */ new Date();
+        target.setDate(target.getDate() + days);
+        input.value = target.toISOString().slice(0, 10);
+      });
+    };
+    addQuick("Today", 0);
+    addQuick("Tomorrow", 1);
+    addQuick("Next week", 7);
+    const actions = contentEl.createDiv({ cls: "aceto-preview-actions" });
+    const cancel = actions.createEl("button", { text: "Cancel" });
+    cancel.onclick = () => {
+      this.onSubmit(null);
+      this.close();
+    };
+    const insert = actions.createEl("button", { cls: "mod-cta", text: "Insert" });
+    insert.onclick = () => {
+      this.onSubmit(input.value || null);
+      this.close();
+    };
+  }
+  onClose() {
+    this.contentEl.empty();
+  }
+};
+
 // src/main.ts
 var DEFAULT_SETTINGS = {
   peopleFolder: "98.Knowledge/People",
@@ -575,7 +659,7 @@ var REQUIRED_PLUGINS = [
   { id: "templater-obsidian", name: "Templater" },
   { id: "obsidian-meta-bind-plugin", name: "Meta Bind" }
 ];
-var EnvironmentValidationModal = class extends import_obsidian2.Modal {
+var EnvironmentValidationModal = class extends import_obsidian3.Modal {
   constructor(app, results) {
     super(app);
     this.results = results;
@@ -605,7 +689,7 @@ var EnvironmentValidationModal = class extends import_obsidian2.Modal {
     this.contentEl.empty();
   }
 };
-var MetadataPreviewModal = class extends import_obsidian2.Modal {
+var MetadataPreviewModal = class extends import_obsidian3.Modal {
   constructor(app, analysis, onApply) {
     super(app);
     this.analysis = analysis;
@@ -648,7 +732,7 @@ var MetadataPreviewModal = class extends import_obsidian2.Modal {
         this.close();
       } catch (error) {
         console.error(error);
-        new import_obsidian2.Notice(`Metadata sync failed: ${error.message || error}`);
+        new import_obsidian3.Notice(`Metadata sync failed: ${error.message || error}`);
         apply.disabled = false;
       }
     };
@@ -667,7 +751,7 @@ var MetadataPreviewModal = class extends import_obsidian2.Modal {
     this.contentEl.empty();
   }
 };
-var BatchPreviewModal = class extends import_obsidian2.Modal {
+var BatchPreviewModal = class extends import_obsidian3.Modal {
   constructor(app, title, analyses, onApply) {
     super(app);
     this.title = title;
@@ -710,7 +794,7 @@ var BatchPreviewModal = class extends import_obsidian2.Modal {
         this.close();
       } catch (error) {
         console.error(error);
-        new import_obsidian2.Notice(`Metadata sync failed: ${error.message || error}`);
+        new import_obsidian3.Notice(`Metadata sync failed: ${error.message || error}`);
         apply.disabled = false;
       }
     };
@@ -719,7 +803,7 @@ var BatchPreviewModal = class extends import_obsidian2.Modal {
     this.contentEl.empty();
   }
 };
-var ACE2XKnowledgeOSPlugin = class extends import_obsidian2.Plugin {
+var ACE2XKnowledgeOSPlugin = class extends import_obsidian3.Plugin {
   async onload() {
     let saved = await this.loadData() || {};
     if (!Object.keys(saved).length) saved = await this.loadLegacyPluginData();
@@ -727,11 +811,11 @@ var ACE2XKnowledgeOSPlugin = class extends import_obsidian2.Plugin {
     this.index = saved.index || {};
     this.processingPaths = /* @__PURE__ */ new Set();
     this.lastTransaction = null;
-    this.syncDebounced = (0, import_obsidian2.debounce)(async (file) => {
-      if (file instanceof import_obsidian2.TFile) await this.syncFile(file, false);
+    this.syncDebounced = (0, import_obsidian3.debounce)(async (file) => {
+      if (file instanceof import_obsidian3.TFile) await this.syncFile(file, false);
     }, this.settings.debounceMs, true);
-    this.recordStatusDebounced = (0, import_obsidian2.debounce)(async (file) => {
-      if (file instanceof import_obsidian2.TFile) await this.syncRecordStatusToSource(file);
+    this.recordStatusDebounced = (0, import_obsidian3.debounce)(async (file) => {
+      if (file instanceof import_obsidian3.TFile) await this.syncRecordStatusToSource(file);
     }, this.settings.debounceMs, true);
     this.addRibbonIcon("refresh-cw", "Preview knowledge sync", () => this.previewCurrentNote());
     this.addCommand({ id: "analyze-current-note", name: "Analyze current note", callback: () => this.previewCurrentNote() });
@@ -743,7 +827,7 @@ var ACE2XKnowledgeOSPlugin = class extends import_obsidian2.Plugin {
     } });
     this.addCommand({ id: "auto-detect-folders", name: "Auto-detect configured folders", callback: async () => {
       const changed = await this.autoDetectFolders();
-      new import_obsidian2.Notice(changed ? "Knowledge OS folder locations updated." : "No better folder matches were found.");
+      new import_obsidian3.Notice(changed ? "Knowledge OS folder locations updated." : "No better folder matches were found.");
     } });
     this.addCommand({ id: "validate-ace2x-environment", name: "Validate ACE2X environment", callback: () => {
       this.showEnvironmentValidation();
@@ -754,15 +838,15 @@ var ACE2XKnowledgeOSPlugin = class extends import_obsidian2.Plugin {
       return true;
     } });
     this.registerEvent(this.app.vault.on("rename", async (file, oldPath) => {
-      if (!(file instanceof import_obsidian2.TFolder)) return;
+      if (!(file instanceof import_obsidian3.TFolder)) return;
       const changed = this.updateConfiguredPathsAfterFolderRename(oldPath, file.path);
       if (changed) {
         await this.persist();
-        new import_obsidian2.Notice("Knowledge OS folder settings updated after folder rename.");
+        new import_obsidian3.Notice("Knowledge OS folder settings updated after folder rename.");
       }
     }));
     this.registerEvent(this.app.vault.on("modify", (file) => {
-      if (!(file instanceof import_obsidian2.TFile)) return;
+      if (!(file instanceof import_obsidian3.TFile)) return;
       if (this.processingPaths.has(file.path)) return;
       if (this.isPersonFile(file)) return;
       if (this.isManagedRecordFile(file) || this.isManagedRecordPath(file)) {
@@ -778,6 +862,7 @@ var ACE2XKnowledgeOSPlugin = class extends import_obsidian2.Plugin {
       recordMarkerHighlightPlugin
     ]);
     this.registerMarkdownPostProcessor((el) => highlightRecordMarkersInElement(el, this.recordTypeKeys()));
+    this.registerEditorSuggest(new DueDateSuggest(this.app, this.recordTypeKeys()));
     this.addRibbonIcon("target", "Toggle Meeting Mode panel", () => this.toggleMeetingModeView());
     this.addCommand({ id: "start-executive-meeting-mode", name: "Start Executive Meeting Mode", callback: () => this.activateMeetingModeView() });
     this.addCommand({ id: "stop-executive-meeting-mode", name: "Stop Executive Meeting Mode", callback: () => this.deactivateMeetingModeView() });
@@ -790,7 +875,7 @@ var ACE2XKnowledgeOSPlugin = class extends import_obsidian2.Plugin {
     this.registerEvent(this.app.workspace.on("file-open", (file) => {
       var _a;
       if (!this.settings.meetingModeAutoOpen) return;
-      if (!(file instanceof import_obsidian2.TFile) || file.extension !== "md") return;
+      if (!(file instanceof import_obsidian3.TFile) || file.extension !== "md") return;
       const fm = (_a = this.app.metadataCache.getFileCache(file)) == null ? void 0 : _a.frontmatter;
       const hasField = (value) => Array.isArray(value) ? value.length > 0 : Boolean(value);
       if (hasField(fm == null ? void 0 : fm.participants) || hasField(fm == null ? void 0 : fm.owner)) {
@@ -850,8 +935,8 @@ var ACE2XKnowledgeOSPlugin = class extends import_obsidian2.Plugin {
       dashboardFolder: "Dashboard folder"
     };
     for (const key of this.folderSettingKeys()) {
-      const configured = (0, import_obsidian2.normalizePath)(this.settings[key] || "");
-      const exists = configured && this.app.vault.getAbstractFileByPath(configured) instanceof import_obsidian2.TFolder;
+      const configured = (0, import_obsidian3.normalizePath)(this.settings[key] || "");
+      const exists = configured && this.app.vault.getAbstractFileByPath(configured) instanceof import_obsidian3.TFolder;
       results.push({
         category: "folder",
         label: folderLabels[key] || key,
@@ -860,14 +945,14 @@ var ACE2XKnowledgeOSPlugin = class extends import_obsidian2.Plugin {
         action: exists ? "" : "Select an existing folder in ACE2X settings or run Auto-detect folders."
       });
     }
-    const templatePath = (0, import_obsidian2.normalizePath)(this.settings.personTemplatePath || "");
+    const templatePath = (0, import_obsidian3.normalizePath)(this.settings.personTemplatePath || "");
     const template = templatePath ? this.app.vault.getAbstractFileByPath(templatePath) : null;
     results.push({
       category: "template",
       label: "Person template",
-      ok: template instanceof import_obsidian2.TFile,
-      detail: template instanceof import_obsidian2.TFile ? `Configured: ${templatePath}` : templatePath ? `Configured template is missing: ${templatePath}` : "No person template has been selected.",
-      action: template instanceof import_obsidian2.TFile ? "" : "Select an existing person template in ACE2X settings."
+      ok: template instanceof import_obsidian3.TFile,
+      detail: template instanceof import_obsidian3.TFile ? `Configured: ${templatePath}` : templatePath ? `Configured template is missing: ${templatePath}` : "No person template has been selected.",
+      action: template instanceof import_obsidian3.TFile ? "" : "Select an existing person template in ACE2X settings."
     });
     const dashboardName = String(this.settings.dashboardBaseName || "").trim().replace(/\.base$/i, "");
     results.push({
@@ -883,7 +968,7 @@ var ACE2XKnowledgeOSPlugin = class extends import_obsidian2.Plugin {
     const results = this.validateEnvironment();
     const issueCount = results.filter((result) => !result.ok).length;
     new EnvironmentValidationModal(this.app, results).open();
-    new import_obsidian2.Notice(
+    new import_obsidian3.Notice(
       issueCount ? `ACE2X found ${issueCount} configuration item${issueCount === 1 ? "" : "s"} requiring attention.` : "ACE2X environment is ready."
     );
     return results;
@@ -898,7 +983,7 @@ var ACE2XKnowledgeOSPlugin = class extends import_obsidian2.Plugin {
     return Object.fromEntries(Object.entries(RECORD_TYPES).map(([key, definition]) => [key, definition.heading]));
   }
   recordFolderPaths() {
-    return Object.values(RECORD_TYPES).map((definition) => (0, import_obsidian2.normalizePath)(this.settings[definition.folderSetting] || "")).filter(Boolean);
+    return Object.values(RECORD_TYPES).map((definition) => (0, import_obsidian3.normalizePath)(this.settings[definition.folderSetting] || "")).filter(Boolean);
   }
   recordTypeKeyForTypeName(typeName) {
     const entry = Object.entries(RECORD_TYPES).find(([, definition]) => definition.typeName === typeName);
@@ -939,16 +1024,16 @@ var ACE2XKnowledgeOSPlugin = class extends import_obsidian2.Plugin {
     return this.app.vault.getMarkdownFiles().filter((file) => this.isPersonFile(file)).map((file) => file.path).sort((a, b) => a.localeCompare(b, void 0, { numeric: true, sensitivity: "base" }));
   }
   vaultFolderPaths() {
-    return this.app.vault.getAllLoadedFiles().filter((entry) => entry instanceof import_obsidian2.TFolder).map((folder) => (0, import_obsidian2.normalizePath)(folder.path)).filter(Boolean).sort((a, b) => a.localeCompare(b, void 0, { numeric: true, sensitivity: "base" }));
+    return this.app.vault.getAllLoadedFiles().filter((entry) => entry instanceof import_obsidian3.TFolder).map((folder) => (0, import_obsidian3.normalizePath)(folder.path)).filter(Boolean).sort((a, b) => a.localeCompare(b, void 0, { numeric: true, sensitivity: "base" }));
   }
   updateConfiguredPathsAfterFolderRename(oldPath, newPath) {
-    oldPath = (0, import_obsidian2.normalizePath)(oldPath || "");
-    newPath = (0, import_obsidian2.normalizePath)(newPath || "");
+    oldPath = (0, import_obsidian3.normalizePath)(oldPath || "");
+    newPath = (0, import_obsidian3.normalizePath)(newPath || "");
     let changed = false;
     for (const key of this.folderSettingKeys()) {
-      const current = (0, import_obsidian2.normalizePath)(this.settings[key] || "");
+      const current = (0, import_obsidian3.normalizePath)(this.settings[key] || "");
       if (current === oldPath || current.startsWith(oldPath + "/")) {
-        this.settings[key] = (0, import_obsidian2.normalizePath)(newPath + current.slice(oldPath.length));
+        this.settings[key] = (0, import_obsidian3.normalizePath)(newPath + current.slice(oldPath.length));
         changed = true;
       }
     }
@@ -986,8 +1071,8 @@ var ACE2XKnowledgeOSPlugin = class extends import_obsidian2.Plugin {
     };
     let changed = false;
     for (const [key, terms] of Object.entries(mappings)) {
-      const current = (0, import_obsidian2.normalizePath)(this.settings[key] || "");
-      const currentExists = current && this.app.vault.getAbstractFileByPath(current) instanceof import_obsidian2.TFolder;
+      const current = (0, import_obsidian3.normalizePath)(this.settings[key] || "");
+      const currentExists = current && this.app.vault.getAbstractFileByPath(current) instanceof import_obsidian3.TFolder;
       if (currentExists) continue;
       const match = this.findFolderMatch(terms);
       if (match && match !== current) {
@@ -1020,16 +1105,16 @@ var ACE2XKnowledgeOSPlugin = class extends import_obsidian2.Plugin {
   }
   isManagedRecordFile(file) {
     var _a;
-    if (!(file instanceof import_obsidian2.TFile) || file.extension !== "md") return false;
+    if (!(file instanceof import_obsidian3.TFile) || file.extension !== "md") return false;
     const fm = (_a = this.app.metadataCache.getFileCache(file)) == null ? void 0 : _a.frontmatter;
     if (!(fm == null ? void 0 : fm.record_id) || !(fm == null ? void 0 : fm.source_path)) return false;
     return Object.values(RECORD_TYPES).some((definition) => fm.type === definition.typeName);
   }
   isManagedRecordPath(file) {
-    if (!(file instanceof import_obsidian2.TFile) || file.extension !== "md") return false;
-    const path = (0, import_obsidian2.normalizePath)(file.path);
+    if (!(file instanceof import_obsidian3.TFile) || file.extension !== "md") return false;
+    const path = (0, import_obsidian3.normalizePath)(file.path);
     return Object.values(RECORD_TYPES).some((definition) => {
-      const folder = (0, import_obsidian2.normalizePath)(this.settings[definition.folderSetting] || "");
+      const folder = (0, import_obsidian3.normalizePath)(this.settings[definition.folderSetting] || "");
       return folder && path.startsWith(folder + "/");
     });
   }
@@ -1073,33 +1158,33 @@ var ACE2XKnowledgeOSPlugin = class extends import_obsidian2.Plugin {
     return `${body} s::o`;
   }
   shouldProcess(file) {
-    if (!(file instanceof import_obsidian2.TFile) || file.extension !== "md") return false;
-    const path = (0, import_obsidian2.normalizePath)(file.path);
-    const peopleFolder = (0, import_obsidian2.normalizePath)(this.settings.peopleFolder);
+    if (!(file instanceof import_obsidian3.TFile) || file.extension !== "md") return false;
+    const path = (0, import_obsidian3.normalizePath)(file.path);
+    const peopleFolder = (0, import_obsidian3.normalizePath)(this.settings.peopleFolder);
     if (path === peopleFolder || path.startsWith(peopleFolder + "/")) return false;
-    const managedFolders = [this.settings.executiveFolder, this.settings.decisionsFolder, this.settings.risksFolder, this.settings.issuesFolder, this.settings.actionsFolder].map((folder) => (0, import_obsidian2.normalizePath)(folder || "")).filter(Boolean);
+    const managedFolders = [this.settings.executiveFolder, this.settings.decisionsFolder, this.settings.risksFolder, this.settings.issuesFolder, this.settings.actionsFolder].map((folder) => (0, import_obsidian3.normalizePath)(folder || "")).filter(Boolean);
     if (managedFolders.some((folder) => path === folder || path.startsWith(folder + "/"))) return false;
     return !(this.settings.excludedFolders || []).some((folder) => {
-      const normalized = (0, import_obsidian2.normalizePath)(folder.trim());
+      const normalized = (0, import_obsidian3.normalizePath)(folder.trim());
       return normalized && (path === normalized || path.startsWith(normalized + "/"));
     });
   }
   async previewCurrentNote() {
     const file = this.app.workspace.getActiveFile();
-    if (!file) return new import_obsidian2.Notice("No active note.");
-    if (!this.shouldProcess(file)) return new import_obsidian2.Notice("This note is excluded from knowledge sync.");
+    if (!file) return new import_obsidian3.Notice("No active note.");
+    if (!this.shouldProcess(file)) return new import_obsidian3.Notice("This note is excluded from knowledge sync.");
     const analysis = await this.analyzeFile(file);
     new MetadataPreviewModal(this.app, analysis, async () => {
       this.beginTransaction(`Sync ${file.basename}`);
       const result = await this.applyAnalysis(analysis);
       await this.persist();
-      new import_obsidian2.Notice(`Synced ${result.decisions} decisions, ${result.risks} risks, ${result.issues} issues, ${result.executive} executive follow-ups and ${result.actions} actions.`);
+      new import_obsidian3.Notice(`Synced ${result.decisions} decisions, ${result.risks} risks, ${result.issues} issues, ${result.executive} executive follow-ups and ${result.actions} actions.`);
     }).open();
   }
   async previewCurrentFolder() {
     var _a;
     const active = this.app.workspace.getActiveFile();
-    if (!active) return new import_obsidian2.Notice("No active note.");
+    if (!active) return new import_obsidian3.Notice("No active note.");
     const folder = ((_a = active.parent) == null ? void 0 : _a.path) || "";
     const files = this.app.vault.getMarkdownFiles().filter((f) => {
       var _a2;
@@ -1111,7 +1196,7 @@ var ACE2XKnowledgeOSPlugin = class extends import_obsidian2.Plugin {
     await this.previewBatch("Sync entire vault", this.app.vault.getMarkdownFiles().filter((f) => this.shouldProcess(f)));
   }
   async previewBatch(title, files) {
-    if (!files.length) return new import_obsidian2.Notice("No eligible notes found.");
+    if (!files.length) return new import_obsidian3.Notice("No eligible notes found.");
     const analyses = [];
     for (const file of files) analyses.push(await this.analyzeFile(file));
     new BatchPreviewModal(this.app, title, analyses, async () => {
@@ -1120,7 +1205,7 @@ var ACE2XKnowledgeOSPlugin = class extends import_obsidian2.Plugin {
         await this.applyAnalysis(analysis);
       }
       await this.persist();
-      new import_obsidian2.Notice(`Sync complete: ${analyses.length} notes processed.`);
+      new import_obsidian3.Notice(`Sync complete: ${analyses.length} notes processed.`);
     }).open();
   }
   beginTransaction(label) {
@@ -1131,15 +1216,15 @@ var ACE2XKnowledgeOSPlugin = class extends import_obsidian2.Plugin {
     this.lastTransaction.files.set(file.path, await this.app.vault.read(file));
   }
   async undoLastTransaction() {
-    if (!this.lastTransaction) return new import_obsidian2.Notice("Nothing to undo.");
+    if (!this.lastTransaction) return new import_obsidian3.Notice("Nothing to undo.");
     const entries = [...this.lastTransaction.files.entries()].reverse();
     for (const [path, content] of entries) {
       const file = this.app.vault.getAbstractFileByPath(path);
       if (content === null) {
-        if (file instanceof import_obsidian2.TFile) await this.app.vault.delete(file);
+        if (file instanceof import_obsidian3.TFile) await this.app.vault.delete(file);
         continue;
       }
-      if (file instanceof import_obsidian2.TFile) {
+      if (file instanceof import_obsidian3.TFile) {
         this.processingPaths.add(path);
         await this.app.vault.modify(file, content);
         this.processingPaths.delete(path);
@@ -1147,7 +1232,7 @@ var ACE2XKnowledgeOSPlugin = class extends import_obsidian2.Plugin {
     }
     const count = entries.length;
     this.lastTransaction = null;
-    new import_obsidian2.Notice(`Undo complete: restored ${count} files.`);
+    new import_obsidian3.Notice(`Undo complete: restored ${count} files.`);
   }
   async analyzeFile(file) {
     const content = await this.app.vault.cachedRead(file);
@@ -1182,7 +1267,7 @@ var ACE2XKnowledgeOSPlugin = class extends import_obsidian2.Plugin {
     this.beginTransaction(`Automatic sync ${file.basename}`);
     const result = await this.applyAnalysis(analysis);
     await this.persist();
-    if (showNotice) new import_obsidian2.Notice(`Synced ${result.decisions} decisions, ${result.risks} risks, ${result.issues} issues, ${result.executive} executive follow-ups and ${result.actions} actions.`);
+    if (showNotice) new import_obsidian3.Notice(`Synced ${result.decisions} decisions, ${result.risks} risks, ${result.issues} issues, ${result.executive} executive follow-ups and ${result.actions} actions.`);
   }
   async applyAnalysis(initialAnalysis) {
     const file = initialAnalysis.file;
@@ -1250,6 +1335,13 @@ var ACE2XKnowledgeOSPlugin = class extends import_obsidian2.Plugin {
   stripIgnoredContent(text) {
     return text.replace(/^---\n[\s\S]*?\n---\n?/m, "").replace(/```[\s\S]*?```/g, "").replace(/`[^`]*`/g, "").replace(/https?:\/\/\S+/g, "").replace(/\[([^\]]+)\]\([^)]+\)/g, "$1").replace(/!\[\[.*?\]\]/g, "").replace(/\[\[([^\]|]+)\|([^\]]+)\]\]/g, "$2").replace(/\[\[([^\]]+)\]\]/g, "$1");
   }
+  extractDueDate(text) {
+    const match = String(text || "").match(/\[due::\s*(\d{4}-\d{2}-\d{2})\]/i);
+    return match ? match[1] : "";
+  }
+  stripDueDate(text) {
+    return String(text || "").replace(/\s*\[due::\s*\d{4}-\d{2}-\d{2}\]\s*/i, " ").replace(/\s+/g, " ").trim();
+  }
   extractTags(text) {
     return [...new Set((text.match(/#[\p{L}\p{N}_/-]+/gu) || []).map((x) => x.slice(1)))].sort();
   }
@@ -1267,15 +1359,15 @@ var ACE2XKnowledgeOSPlugin = class extends import_obsidian2.Plugin {
   }
   isPersonFile(file) {
     var _a, _b;
-    if (!(file instanceof import_obsidian2.TFile)) return false;
-    const folder = (0, import_obsidian2.normalizePath)(this.settings.peopleFolder);
+    if (!(file instanceof import_obsidian3.TFile)) return false;
+    const folder = (0, import_obsidian3.normalizePath)(this.settings.peopleFolder);
     const inPeopleFolder = file.path === folder || file.path.startsWith(folder + "/");
     const type = (_b = (_a = this.app.metadataCache.getFileCache(file)) == null ? void 0 : _a.frontmatter) == null ? void 0 : _b.type;
     return inPeopleFolder || String(type || "").toLowerCase() === "person";
   }
   resolvePersonLink(link, sourceFile) {
     const destination = this.app.metadataCache.getFirstLinkpathDest(link.target, sourceFile.path);
-    if (!(destination instanceof import_obsidian2.TFile) || !this.isPersonFile(destination)) return null;
+    if (!(destination instanceof import_obsidian3.TFile) || !this.isPersonFile(destination)) return null;
     return {
       path: destination.path,
       basename: destination.basename,
@@ -1294,7 +1386,7 @@ var ACE2XKnowledgeOSPlugin = class extends import_obsidian2.Plugin {
   resolveTypedLink(link, sourceFile, typeName) {
     var _a, _b;
     const destination = this.app.metadataCache.getFirstLinkpathDest(link.target, sourceFile.path);
-    if (!(destination instanceof import_obsidian2.TFile)) return null;
+    if (!(destination instanceof import_obsidian3.TFile)) return null;
     const fmType = String(((_b = (_a = this.app.metadataCache.getFileCache(destination)) == null ? void 0 : _a.frontmatter) == null ? void 0 : _b.type) || "").toLowerCase();
     if (fmType !== typeName) return null;
     return {
@@ -1354,7 +1446,9 @@ var ACE2XKnowledgeOSPlugin = class extends import_obsidian2.Plugin {
       if (!match) continue;
       const type = match[1].toLowerCase();
       const parsedStatus = this.parseInlineStatus(match[2]);
-      const recordText = parsedStatus.text.replace(/\s+/g, " ").trim();
+      let recordText = parsedStatus.text.replace(/\s+/g, " ").trim();
+      const dueDate = this.extractDueDate(recordText);
+      if (dueDate) recordText = this.stripDueDate(recordText);
       if (!recordText) continue;
       const peopleByPath = /* @__PURE__ */ new Map();
       const typedLinksByField = {};
@@ -1388,6 +1482,7 @@ var ACE2XKnowledgeOSPlugin = class extends import_obsidian2.Plugin {
         text: recordText,
         status: parsedStatus.status,
         doneDate: parsedStatus.doneDate,
+        due: dueDate,
         displayText: this.cleanGeneratedText(recordText),
         personDisplayText: this.personRecordDisplayText(recordText),
         people: [...peopleByPath.values()],
@@ -1432,7 +1527,7 @@ var ACE2XKnowledgeOSPlugin = class extends import_obsidian2.Plugin {
   }
   async ensureFolder(path) {
     let current = "";
-    for (const part of (0, import_obsidian2.normalizePath)(path).split("/")) {
+    for (const part of (0, import_obsidian3.normalizePath)(path).split("/")) {
       current = current ? `${current}/${part}` : part;
       if (!this.app.vault.getAbstractFileByPath(current)) await this.app.vault.createFolder(current);
     }
@@ -1441,15 +1536,15 @@ var ACE2XKnowledgeOSPlugin = class extends import_obsidian2.Plugin {
     return name.replace(/[\\/:*?"<>|]/g, "-").replace(/\s+/g, " ").trim();
   }
   async createPersonFile(target) {
-    const folder = (0, import_obsidian2.normalizePath)(this.settings.peopleFolder);
+    const folder = (0, import_obsidian3.normalizePath)(this.settings.peopleFolder);
     await this.ensureFolder(folder);
     const displayName = this.safeFileName(target.split("/").pop());
     if (!displayName) return;
-    const path = (0, import_obsidian2.normalizePath)(`${folder}/${displayName}.md`);
+    const path = (0, import_obsidian3.normalizePath)(`${folder}/${displayName}.md`);
     if (this.app.vault.getAbstractFileByPath(path)) return;
     let content = "---\ntype: person\naliases:\n  - {{name}}\n---\n\n# {{name}}\n";
-    const template = this.app.vault.getAbstractFileByPath((0, import_obsidian2.normalizePath)(this.settings.personTemplatePath));
-    if (template instanceof import_obsidian2.TFile) content = await this.app.vault.cachedRead(template);
+    const template = this.app.vault.getAbstractFileByPath((0, import_obsidian3.normalizePath)(this.settings.personTemplatePath));
+    if (template instanceof import_obsidian3.TFile) content = await this.app.vault.cachedRead(template);
     content = content.replace(/<%\s*tp\.file\.title\s*%>/g, displayName).replace(/\{\{name\}\}/g, displayName);
     const file = await this.app.vault.create(path, content);
     if (this.lastTransaction) this.lastTransaction.files.set(path, null);
@@ -1462,7 +1557,7 @@ var ACE2XKnowledgeOSPlugin = class extends import_obsidian2.Plugin {
   }
   recordFolder(type) {
     const definition = RECORD_TYPES[type];
-    return (0, import_obsidian2.normalizePath)(this.settings[definition.folderSetting]);
+    return (0, import_obsidian3.normalizePath)(this.settings[definition.folderSetting]);
   }
   yamlQuote(value) {
     return `"${String(value).replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
@@ -1497,6 +1592,7 @@ var ACE2XKnowledgeOSPlugin = class extends import_obsidian2.Plugin {
       if (!links.length) continue;
       lines.push(`${field}:`, ...links.map((l) => `  - ${this.yamlQuote(`[[${l.basename}]]`)}`));
     }
+    if (record.due) lines.push(`due: ${record.due}`);
     if (this.settings.priorityEnabled) {
       const levels = this.settings.priorityLevels || ["None"];
       const priority = levels.includes(existingPriority) ? existingPriority : levels[0];
@@ -1512,12 +1608,12 @@ var ACE2XKnowledgeOSPlugin = class extends import_obsidian2.Plugin {
     for (const record of records) {
       const folder = this.recordFolder(record.type);
       await this.ensureFolder(folder);
-      const path = (0, import_obsidian2.normalizePath)(`${folder}/${this.recordFileName(record, date)}`);
+      const path = (0, import_obsidian3.normalizePath)(`${folder}/${this.recordFileName(record, date)}`);
       expected.add(path);
       const existing = this.app.vault.getAbstractFileByPath(path);
-      const existingPriority = existing instanceof import_obsidian2.TFile ? (_b = (_a = this.app.metadataCache.getFileCache(existing)) == null ? void 0 : _a.frontmatter) == null ? void 0 : _b.priority : void 0;
+      const existingPriority = existing instanceof import_obsidian3.TFile ? (_b = (_a = this.app.metadataCache.getFileCache(existing)) == null ? void 0 : _a.frontmatter) == null ? void 0 : _b.priority : void 0;
       const content = this.buildRecordNote(record, sourceFile, sourceLink, date, existingPriority);
-      if (existing instanceof import_obsidian2.TFile) {
+      if (existing instanceof import_obsidian3.TFile) {
         const current = await this.app.vault.cachedRead(existing);
         if (current !== content) {
           await this.captureBefore(existing);
@@ -1531,7 +1627,7 @@ var ACE2XKnowledgeOSPlugin = class extends import_obsidian2.Plugin {
       }
     }
     for (const definition of Object.values(RECORD_TYPES)) {
-      const folder = (0, import_obsidian2.normalizePath)(this.settings[definition.folderSetting]);
+      const folder = (0, import_obsidian3.normalizePath)(this.settings[definition.folderSetting]);
       const prefix = folder + "/";
       for (const candidate of this.app.vault.getMarkdownFiles()) {
         if (!candidate.path.startsWith(prefix)) continue;
@@ -1559,7 +1655,8 @@ var ACE2XKnowledgeOSPlugin = class extends import_obsidian2.Plugin {
       ...priorityOrder,
       "      - source",
       "      - status",
-      "      - date"
+      "      - date",
+      "      - due"
     ]);
     return [
       "filters:",
@@ -1579,6 +1676,8 @@ var ACE2XKnowledgeOSPlugin = class extends import_obsidian2.Plugin {
       "    displayName: Status",
       "  date:",
       "    displayName: Date",
+      "  due:",
+      "    displayName: Due",
       "views:",
       "  - type: table",
       "    name: All Open Items",
@@ -1593,6 +1692,7 @@ var ACE2XKnowledgeOSPlugin = class extends import_obsidian2.Plugin {
       "      - source",
       "      - status",
       "      - date",
+      "      - due",
       ...typeViews,
       "  - type: table",
       "    name: By Owner",
@@ -1609,6 +1709,7 @@ var ACE2XKnowledgeOSPlugin = class extends import_obsidian2.Plugin {
       "      - source",
       "      - status",
       "      - date",
+      "      - due",
       "  - type: table",
       "    name: Recently Done",
       "    filters:",
@@ -1624,11 +1725,11 @@ var ACE2XKnowledgeOSPlugin = class extends import_obsidian2.Plugin {
     ].join("\n");
   }
   async ensureKnowledgeBase() {
-    const folder = (0, import_obsidian2.normalizePath)(this.settings.dashboardFolder || "01.Home/Dashboards");
+    const folder = (0, import_obsidian3.normalizePath)(this.settings.dashboardFolder || "01.Home/Dashboards");
     await this.ensureFolder(folder);
     const rawName = String(this.settings.dashboardBaseName || "00.\u{1F39B}\uFE0F Master").trim().replace(/\.base$/i, "");
     const baseName = this.safeFileName(rawName) || "00.\u{1F39B}\uFE0F Master";
-    const path = (0, import_obsidian2.normalizePath)(`${folder}/${baseName}.base`);
+    const path = (0, import_obsidian3.normalizePath)(`${folder}/${baseName}.base`);
     if (this.app.vault.getAbstractFileByPath(path)) return;
     await this.app.vault.create(path, this.buildKnowledgeBaseContent());
     if (this.lastTransaction) this.lastTransaction.files.set(path, null);
@@ -1683,13 +1784,13 @@ var ACE2XKnowledgeOSPlugin = class extends import_obsidian2.Plugin {
     return changed;
   }
   async syncKnowledgeOSStatusChanges() {
-    const managedFolders = [this.settings.executiveFolder, this.settings.decisionsFolder, this.settings.risksFolder, this.settings.issuesFolder, this.settings.actionsFolder].map((folder) => (0, import_obsidian2.normalizePath)(folder || "")).filter(Boolean);
+    const managedFolders = [this.settings.executiveFolder, this.settings.decisionsFolder, this.settings.risksFolder, this.settings.issuesFolder, this.settings.actionsFolder].map((folder) => (0, import_obsidian3.normalizePath)(folder || "")).filter(Boolean);
     const recordFiles = this.app.vault.getMarkdownFiles().filter((file) => {
-      const path = (0, import_obsidian2.normalizePath)(file.path);
+      const path = (0, import_obsidian3.normalizePath)(file.path);
       return managedFolders.some((folder) => path.startsWith(folder + "/"));
     });
     if (!recordFiles.length) {
-      new import_obsidian2.Notice("No Knowledge OS records were found.");
+      new import_obsidian3.Notice("No Knowledge OS records were found.");
       return;
     }
     let changed = 0;
@@ -1703,11 +1804,11 @@ var ACE2XKnowledgeOSPlugin = class extends import_obsidian2.Plugin {
       }
     }
     if (failed) {
-      new import_obsidian2.Notice(`Knowledge OS status sync completed: ${changed} changed, ${failed} failed.`);
+      new import_obsidian3.Notice(`Knowledge OS status sync completed: ${changed} changed, ${failed} failed.`);
     } else if (changed) {
-      new import_obsidian2.Notice(`Knowledge OS status sync completed: ${changed} source item${changed === 1 ? "" : "s"} updated.`);
+      new import_obsidian3.Notice(`Knowledge OS status sync completed: ${changed} source item${changed === 1 ? "" : "s"} updated.`);
     } else {
-      new import_obsidian2.Notice("Knowledge OS status sync completed. No status changes were found.");
+      new import_obsidian3.Notice("Knowledge OS status sync completed. No status changes were found.");
     }
   }
   readSimpleFrontmatter(content) {
@@ -1732,7 +1833,7 @@ var ACE2XKnowledgeOSPlugin = class extends import_obsidian2.Plugin {
     if (!(fm == null ? void 0 : fm.record_id) || !(fm == null ? void 0 : fm.source_path)) return false;
     const sourcePath = String(fm.source_path);
     const sourceFile = this.app.vault.getAbstractFileByPath(sourcePath);
-    if (!(sourceFile instanceof import_obsidian2.TFile) || !this.shouldProcess(sourceFile)) return false;
+    if (!(sourceFile instanceof import_obsidian3.TFile) || !this.shouldProcess(sourceFile)) return false;
     const indexed = this.index[sourcePath];
     const indexedRecord = (_a = indexed == null ? void 0 : indexed.records) == null ? void 0 : _a.find((record) => record.id === String(fm.record_id));
     if (!indexedRecord) return false;
@@ -1765,7 +1866,7 @@ var ACE2XKnowledgeOSPlugin = class extends import_obsidian2.Plugin {
     return false;
   }
 };
-var ACE2XKnowledgeOSSettingTab = class extends import_obsidian2.PluginSettingTab {
+var ACE2XKnowledgeOSSettingTab = class extends import_obsidian3.PluginSettingTab {
   constructor(app, plugin) {
     super(app, plugin);
     this.plugin = plugin;
@@ -1774,24 +1875,24 @@ var ACE2XKnowledgeOSSettingTab = class extends import_obsidian2.PluginSettingTab
     const { containerEl } = this;
     containerEl.empty();
     containerEl.createEl("h2", { text: "ACE2X Knowledge OS" });
-    new import_obsidian2.Setting(containerEl).setName("Automatic sync").setDesc("Process notes after saving. Manual preview is recommended.").addToggle((toggle) => toggle.setValue(this.plugin.settings.autoSync).onChange(async (value) => {
+    new import_obsidian3.Setting(containerEl).setName("Automatic sync").setDesc("Process notes after saving. Manual preview is recommended.").addToggle((toggle) => toggle.setValue(this.plugin.settings.autoSync).onChange(async (value) => {
       this.plugin.settings.autoSync = value;
       await this.plugin.persist();
     }));
     const folderPaths = this.plugin.vaultFolderPaths();
-    new import_obsidian2.Setting(containerEl).setName("Auto-detect folders").setDesc("Find likely People, Executive, Decisions, Risks, Issues and Dashboard folders when a configured location is missing.").addButton((button) => button.setButtonText("Detect folders").onClick(async () => {
+    new import_obsidian3.Setting(containerEl).setName("Auto-detect folders").setDesc("Find likely People, Executive, Decisions, Risks, Issues and Dashboard folders when a configured location is missing.").addButton((button) => button.setButtonText("Detect folders").onClick(async () => {
       const changed = await this.plugin.autoDetectFolders();
-      new import_obsidian2.Notice(changed ? "Folder locations updated." : "No better folder matches were found.");
+      new import_obsidian3.Notice(changed ? "Folder locations updated." : "No better folder matches were found.");
       this.display();
     }));
     const validationResults = this.plugin.validateEnvironment();
     const validationIssues = validationResults.filter((result) => !result.ok).length;
-    new import_obsidian2.Setting(containerEl).setName("Environment validation").setDesc(
+    new import_obsidian3.Setting(containerEl).setName("Environment validation").setDesc(
       validationIssues ? `${validationIssues} configuration item${validationIssues === 1 ? "" : "s"} require attention. Validation reports issues but does not block ACE2X.` : "Required plugins and configured locations are ready."
     ).addButton((button) => button.setButtonText("Validate environment").setCta().onClick(() => this.plugin.showEnvironmentValidation()));
     this.addFolderPicker(containerEl, "People folder", "Folder containing person pages. Pages with type: person are also recognized elsewhere.", "peopleFolder", folderPaths);
-    new import_obsidian2.Setting(containerEl).setName("Person template").setDesc("Template used when creating a missing person page.").addText((text) => text.setValue(this.plugin.settings.personTemplatePath).onChange(async (value) => {
-      this.plugin.settings.personTemplatePath = (0, import_obsidian2.normalizePath)(value.trim());
+    new import_obsidian3.Setting(containerEl).setName("Person template").setDesc("Template used when creating a missing person page.").addText((text) => text.setValue(this.plugin.settings.personTemplatePath).onChange(async (value) => {
+      this.plugin.settings.personTemplatePath = (0, import_obsidian3.normalizePath)(value.trim());
       await this.plugin.persist();
     }));
     this.addFolderPicker(containerEl, "Executive follow-up folder", "Folder for e:: record notes.", "executiveFolder", folderPaths);
@@ -1800,36 +1901,36 @@ var ACE2XKnowledgeOSSettingTab = class extends import_obsidian2.PluginSettingTab
     this.addFolderPicker(containerEl, "Issues folder", "Folder for issue record notes.", "issuesFolder", folderPaths);
     this.addFolderPicker(containerEl, "Actions folder", "Folder for a:: record notes.", "actionsFolder", folderPaths);
     this.addFolderPicker(containerEl, "Dashboard folder", "Folder where the master Base dashboard is created. Existing Base files are never overwritten.", "dashboardFolder", folderPaths);
-    new import_obsidian2.Setting(containerEl).setName("Dashboard Base name").setDesc("Filename for the master Base. Enter a name without .base. Changing it creates the new Base on the next sync and does not delete the previous file.").addText((text) => text.setPlaceholder("00.\u{1F39B}\uFE0F Master").setValue(this.plugin.settings.dashboardBaseName || "00.\u{1F39B}\uFE0F Master").onChange(async (value) => {
+    new import_obsidian3.Setting(containerEl).setName("Dashboard Base name").setDesc("Filename for the master Base. Enter a name without .base. Changing it creates the new Base on the next sync and does not delete the previous file.").addText((text) => text.setPlaceholder("00.\u{1F39B}\uFE0F Master").setValue(this.plugin.settings.dashboardBaseName || "00.\u{1F39B}\uFE0F Master").onChange(async (value) => {
       this.plugin.settings.dashboardBaseName = value.trim().replace(/\.base$/i, "") || "00.\u{1F39B}\uFE0F Master";
       await this.plugin.persist();
     }));
-    new import_obsidian2.Setting(containerEl).setName("Create unresolved links as people").setDesc("Off by default. When enabled, unresolved links inside d::, r::, i:: or e:: records create person pages.").addToggle((toggle) => toggle.setValue(this.plugin.settings.autoCreatePeople).onChange(async (value) => {
+    new import_obsidian3.Setting(containerEl).setName("Create unresolved links as people").setDesc("Off by default. When enabled, unresolved links inside d::, r::, i:: or e:: records create person pages.").addToggle((toggle) => toggle.setValue(this.plugin.settings.autoCreatePeople).onChange(async (value) => {
       this.plugin.settings.autoCreatePeople = value;
       await this.plugin.persist();
     }));
-    new import_obsidian2.Setting(containerEl).setName("Excluded folders").setDesc("Comma-separated vault paths.").addTextArea((text) => text.setValue((this.plugin.settings.excludedFolders || []).join(", ")).onChange(async (value) => {
-      this.plugin.settings.excludedFolders = value.split(",").map((x) => (0, import_obsidian2.normalizePath)(x.trim())).filter(Boolean);
+    new import_obsidian3.Setting(containerEl).setName("Excluded folders").setDesc("Comma-separated vault paths.").addTextArea((text) => text.setValue((this.plugin.settings.excludedFolders || []).join(", ")).onChange(async (value) => {
+      this.plugin.settings.excludedFolders = value.split(",").map((x) => (0, import_obsidian3.normalizePath)(x.trim())).filter(Boolean);
       await this.plugin.persist();
     }));
-    new import_obsidian2.Setting(containerEl).setName("Excluded headings").setDesc("Comma-separated heading prefixes ignored during analysis.").addTextArea((text) => text.setValue((this.plugin.settings.excludedHeadings || []).join(", ")).onChange(async (value) => {
+    new import_obsidian3.Setting(containerEl).setName("Excluded headings").setDesc("Comma-separated heading prefixes ignored during analysis.").addTextArea((text) => text.setValue((this.plugin.settings.excludedHeadings || []).join(", ")).onChange(async (value) => {
       this.plugin.settings.excludedHeadings = value.split(",").map((x) => x.trim().toLowerCase()).filter(Boolean);
       await this.plugin.persist();
     }));
-    new import_obsidian2.Setting(containerEl).setName("Enable priority field").setDesc("Adds an editable Priority property to record notes and the dashboard Base.").addToggle((toggle) => toggle.setValue(this.plugin.settings.priorityEnabled).onChange(async (value) => {
+    new import_obsidian3.Setting(containerEl).setName("Enable priority field").setDesc("Adds an editable Priority property to record notes and the dashboard Base.").addToggle((toggle) => toggle.setValue(this.plugin.settings.priorityEnabled).onChange(async (value) => {
       this.plugin.settings.priorityEnabled = value;
       await this.plugin.persist();
       this.display();
     }));
     if (this.plugin.settings.priorityEnabled) {
-      new import_obsidian2.Setting(containerEl).setName("Priority levels").setDesc("Comma-separated, in order. The first level is the default for new records.").addText((text) => text.setValue((this.plugin.settings.priorityLevels || []).join(", ")).onChange(async (value) => {
+      new import_obsidian3.Setting(containerEl).setName("Priority levels").setDesc("Comma-separated, in order. The first level is the default for new records.").addText((text) => text.setValue((this.plugin.settings.priorityLevels || []).join(", ")).onChange(async (value) => {
         this.plugin.settings.priorityLevels = value.split(",").map((x) => x.trim()).filter(Boolean);
         await this.plugin.persist();
       }));
     }
     containerEl.createEl("h3", { text: "Meeting Mode" });
     const personPaths = this.plugin.personFilePaths();
-    new import_obsidian2.Setting(containerEl).setName("Your person note").setDesc("Excludes you from Smart Owner Detection's candidate list when Meeting Mode reads a note's participants/people/owner.").addDropdown((dropdown) => {
+    new import_obsidian3.Setting(containerEl).setName("Your person note").setDesc("Excludes you from Smart Owner Detection's candidate list when Meeting Mode reads a note's participants/people/owner.").addDropdown((dropdown) => {
       dropdown.addOption("", "None selected");
       for (const path of personPaths) dropdown.addOption(path, path);
       dropdown.setValue(this.plugin.settings.yourPersonNote || "");
@@ -1838,38 +1939,38 @@ var ACE2XKnowledgeOSSettingTab = class extends import_obsidian2.PluginSettingTab
         await this.plugin.persist();
       });
     });
-    new import_obsidian2.Setting(containerEl).setName("Open panel automatically for meeting notes").setDesc("Opens the Meeting Mode panel when a note with a participants or owner frontmatter field becomes active.").addToggle((toggle) => toggle.setValue(this.plugin.settings.meetingModeAutoOpen).onChange(async (value) => {
+    new import_obsidian3.Setting(containerEl).setName("Open panel automatically for meeting notes").setDesc("Opens the Meeting Mode panel when a note with a participants or owner frontmatter field becomes active.").addToggle((toggle) => toggle.setValue(this.plugin.settings.meetingModeAutoOpen).onChange(async (value) => {
       this.plugin.settings.meetingModeAutoOpen = value;
       await this.plugin.persist();
     }));
-    new import_obsidian2.Setting(containerEl).setName("Remember last owner").setDesc("Pre-select the previously used owner across captures when it's among the current note's candidates.").addToggle((toggle) => toggle.setValue(this.plugin.settings.meetingModeRememberOwner).onChange(async (value) => {
+    new import_obsidian3.Setting(containerEl).setName("Remember last owner").setDesc("Pre-select the previously used owner across captures when it's among the current note's candidates.").addToggle((toggle) => toggle.setValue(this.plugin.settings.meetingModeRememberOwner).onChange(async (value) => {
       this.plugin.settings.meetingModeRememberOwner = value;
       await this.plugin.persist();
     }));
-    new import_obsidian2.Setting(containerEl).setName("Remember last category").setDesc("Pre-fill the Quick Capture prefix (d:: r:: i:: e:: a::) from your last capture.").addToggle((toggle) => toggle.setValue(this.plugin.settings.meetingModeRememberCategory).onChange(async (value) => {
+    new import_obsidian3.Setting(containerEl).setName("Remember last category").setDesc("Pre-fill the Quick Capture prefix (d:: r:: i:: e:: a::) from your last capture.").addToggle((toggle) => toggle.setValue(this.plugin.settings.meetingModeRememberCategory).onChange(async (value) => {
       this.plugin.settings.meetingModeRememberCategory = value;
       await this.plugin.persist();
     }));
-    new import_obsidian2.Setting(containerEl).setName("Show live counters").setDesc("Display per-type record counts in the Meeting Mode panel.").addToggle((toggle) => toggle.setValue(this.plugin.settings.meetingModeShowCounters).onChange(async (value) => {
+    new import_obsidian3.Setting(containerEl).setName("Show live counters").setDesc("Display per-type record counts in the Meeting Mode panel.").addToggle((toggle) => toggle.setValue(this.plugin.settings.meetingModeShowCounters).onChange(async (value) => {
       this.plugin.settings.meetingModeShowCounters = value;
       await this.plugin.persist();
     }));
-    new import_obsidian2.Setting(containerEl).setName("Focus after save").setDesc("Refocus the Quick Capture field after each capture, keeping your hands on the keyboard.").addToggle((toggle) => toggle.setValue(this.plugin.settings.meetingModeFocusAfterSave).onChange(async (value) => {
+    new import_obsidian3.Setting(containerEl).setName("Focus after save").setDesc("Refocus the Quick Capture field after each capture, keeping your hands on the keyboard.").addToggle((toggle) => toggle.setValue(this.plugin.settings.meetingModeFocusAfterSave).onChange(async (value) => {
       this.plugin.settings.meetingModeFocusAfterSave = value;
       await this.plugin.persist();
     }));
     this.renderTermsReference(containerEl);
   }
   addFolderPicker(containerEl, name, description, settingKey, folderPaths) {
-    const current = (0, import_obsidian2.normalizePath)(this.plugin.settings[settingKey] || "");
-    const exists = current && this.app.vault.getAbstractFileByPath(current) instanceof import_obsidian2.TFolder;
-    const setting = new import_obsidian2.Setting(containerEl).setName(name).setDesc(exists ? description : `${description} Current location is missing; select a folder or run auto-detect.`);
+    const current = (0, import_obsidian3.normalizePath)(this.plugin.settings[settingKey] || "");
+    const exists = current && this.app.vault.getAbstractFileByPath(current) instanceof import_obsidian3.TFolder;
+    const setting = new import_obsidian3.Setting(containerEl).setName(name).setDesc(exists ? description : `${description} Current location is missing; select a folder or run auto-detect.`);
     setting.addDropdown((dropdown) => {
       if (current && !folderPaths.includes(current)) dropdown.addOption(current, `\u26A0 ${current} (missing)`);
       for (const path of folderPaths) dropdown.addOption(path, path);
       dropdown.setValue(current || folderPaths[0] || "");
       dropdown.onChange(async (value) => {
-        this.plugin.settings[settingKey] = (0, import_obsidian2.normalizePath)(value);
+        this.plugin.settings[settingKey] = (0, import_obsidian3.normalizePath)(value);
         await this.plugin.persist();
         this.display();
       });
@@ -1895,6 +1996,7 @@ var ACE2XKnowledgeOSSettingTab = class extends import_obsidian2.PluginSettingTab
       ["- [ ]", "Your task", "- [ ] Review licensing \u{1F4C5} 2026-07-31"],
       ["#Topic", "Tag", "#Infrastructure or #IAM"],
       ["s::o / s::d", "Inline status", "d:: [[John Doe]] Approve the proposal. #Infrastructure s::o"],
+      ["[due:: ]", "Due date", "e:: Confirm FY27 funding with [[John Doe]]. [due:: 2026-08-28]"],
       ["done::", "Completion date", "~~d:: [[John Doe]] Approve the proposal. s::d done::2026-07-18~~"],
       ["~~text~~", "Completed-record formatting", "~~d:: Decision approved. s::d done::2026-07-18~~"]
     ];
@@ -1911,6 +2013,7 @@ var ACE2XKnowledgeOSSettingTab = class extends import_obsidian2.PluginSettingTab
     notes.createEl("p", { text: "Only links resolving to a person page are synchronized to People pages. A person page is recognized by its location in the People folder or by type: person in frontmatter." });
     notes.createEl("p", { text: "Use s:: inline at the end of a record. Write s::o for Open and s::d for Done. The aliases s::c, done, closed, and complete are accepted and normalized. Base status edits synchronize back to the compact inline value." });
     notes.createEl("p", { text: "When a record becomes Done, synchronization applies strikethrough and adds done:: YYYY-MM-DD. Reopening removes both the strikethrough and completion date." });
+    notes.createEl("p", { text: "On a line starting with d:: r:: i:: e:: or a::, typing [ offers a due:: suggestion. Selecting it opens a date picker and inserts [due:: YYYY-MM-DD]. The due date is parsed out of the sentence, synced to the record note's due field, and shown as a column in the dashboard Base. Removing it from the source line clears it on the next sync." });
     notes.createEl("p", { text: "Editing, changing status, removing a person, or deleting a record updates every associated person page the next time the source note is synced." });
   }
 };

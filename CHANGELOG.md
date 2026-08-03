@@ -14,6 +14,9 @@
 - Added an optional Priority field (off by default) for record notes and the dashboard Base, with a configurable level list; the value is preserved across resyncs.
 - Added Meeting Mode settings: your person note, auto-open for meeting notes, remember last owner, remember last category, show live counters, focus after save.
 - The dashboard Base's type filters and per-type views are now generated dynamically from all configured record types instead of a hardcoded list, so new types (like Actions) appear automatically in newly created Base files. Existing Base files are never overwritten, so a dashboard created before this update needs `- 'type == "action"'` added to its filters manually to surface Actions.
+- Added Meeting Mode search-by-person: a vault-wide person lookup in the Open Items list, independent of the active note's detected owner, with results grouped by record type under colored type headings.
+- Added colored inline highlighting for `d::`/`r::`/`i::`/`e::`/`a::` markers (grey/pink/yellow/green/blue) in both edit mode and reading view, so record types are easier to spot while scanning a note. The same colors are shown in the settings tab's syntax reference table.
+- Added a due-date `EditorSuggest`: typing `[` on a line that starts with a record marker offers a `due::` suggestion; selecting it opens a small date-picker dialog (with Today/Tomorrow/Next week shortcuts) and inserts `[due:: YYYY-MM-DD]`. The due date is parsed out of the record's sentence, synced to the record note's `due` frontmatter field, and added as a column in the dashboard Base (existing Base files need `due` added to their properties/order manually to see it).
 
 ## [0.5.0] - 2026-07-19
 

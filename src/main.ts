@@ -14,6 +14,7 @@ import { MeetingModeView, VIEW_TYPE_MEETING_MODE } from "./meetingMode/view";
 import { highlightLinesField } from "./meetingMode/highlightExtension";
 import { recordMarkerColors, recordMarkerHighlightPlugin } from "./meetingMode/markerColorExtension";
 import { highlightRecordMarkersInElement } from "./meetingMode/markerReadingViewProcessor";
+import { DueDateSuggest } from "./meetingMode/dueDateSuggest";
 
 const DEFAULT_SETTINGS = {
   peopleFolder: "98.Knowledge/People",
@@ -289,6 +290,7 @@ export default class ACE2XKnowledgeOSPlugin extends Plugin {
       recordMarkerHighlightPlugin
     ]);
     this.registerMarkdownPostProcessor((el) => highlightRecordMarkersInElement(el, this.recordTypeKeys()));
+    this.registerEditorSuggest(new DueDateSuggest(this.app, this.recordTypeKeys()));
     this.addRibbonIcon("target", "Toggle Meeting Mode panel", () => this.toggleMeetingModeView());
     this.addCommand({ id: "start-executive-meeting-mode", name: "Start Executive Meeting Mode", callback: () => this.activateMeetingModeView() });
     this.addCommand({ id: "stop-executive-meeting-mode", name: "Stop Executive Meeting Mode", callback: () => this.deactivateMeetingModeView() });
@@ -848,6 +850,18 @@ export default class ACE2XKnowledgeOSPlugin extends Plugin {
       .replace(/\[\[([^\]]+)\]\]/g, "$1");
   }
 
+  extractDueDate(text) {
+    const match = String(text || "").match(/\[due::\s*(\d{4}-\d{2}-\d{2})\]/i);
+    return match ? match[1] : "";
+  }
+
+  stripDueDate(text) {
+    return String(text || "")
+      .replace(/\s*\[due::\s*\d{4}-\d{2}-\d{2}\]\s*/i, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
   extractTags(text) {
     return [...new Set((text.match(/#[\p{L}\p{N}_/-]+/gu) || []).map((x) => x.slice(1)))].sort();
   }
@@ -967,7 +981,9 @@ export default class ACE2XKnowledgeOSPlugin extends Plugin {
       if (!match) continue;
       const type = match[1].toLowerCase();
       const parsedStatus = this.parseInlineStatus(match[2]);
-      const recordText = parsedStatus.text.replace(/\s+/g, " ").trim();
+      let recordText = parsedStatus.text.replace(/\s+/g, " ").trim();
+      const dueDate = this.extractDueDate(recordText);
+      if (dueDate) recordText = this.stripDueDate(recordText);
       if (!recordText) continue;
       const peopleByPath = new Map();
       const typedLinksByField = {};
@@ -1001,6 +1017,7 @@ export default class ACE2XKnowledgeOSPlugin extends Plugin {
         text: recordText,
         status: parsedStatus.status,
         doneDate: parsedStatus.doneDate,
+        due: dueDate,
         displayText: this.cleanGeneratedText(recordText),
         personDisplayText: this.personRecordDisplayText(recordText),
         people: [...peopleByPath.values()],
@@ -1126,6 +1143,7 @@ export default class ACE2XKnowledgeOSPlugin extends Plugin {
       if (!links.length) continue;
       lines.push(`${field}:`, ...links.map((l) => `  - ${this.yamlQuote(`[[${l.basename}]]`)}`));
     }
+    if (record.due) lines.push(`due: ${record.due}`);
     if (this.settings.priorityEnabled) {
       const levels = this.settings.priorityLevels || ["None"];
       const priority = levels.includes(existingPriority) ? existingPriority : levels[0];
@@ -1192,7 +1210,8 @@ export default class ACE2XKnowledgeOSPlugin extends Plugin {
       ...priorityOrder,
       "      - source",
       "      - status",
-      "      - date"
+      "      - date",
+      "      - due"
     ]);
 
     return [
@@ -1213,6 +1232,8 @@ export default class ACE2XKnowledgeOSPlugin extends Plugin {
       "    displayName: Status",
       "  date:",
       "    displayName: Date",
+      "  due:",
+      "    displayName: Due",
       "views:",
       "  - type: table",
       "    name: All Open Items",
@@ -1227,6 +1248,7 @@ export default class ACE2XKnowledgeOSPlugin extends Plugin {
       "      - source",
       "      - status",
       "      - date",
+      "      - due",
       ...typeViews,
       "  - type: table",
       "    name: By Owner",
@@ -1243,6 +1265,7 @@ export default class ACE2XKnowledgeOSPlugin extends Plugin {
       "      - source",
       "      - status",
       "      - date",
+      "      - due",
       "  - type: table",
       "    name: Recently Done",
       "    filters:",
@@ -1640,6 +1663,7 @@ class ACE2XKnowledgeOSSettingTab extends PluginSettingTab {
       ["- [ ]", "Your task", "- [ ] Review licensing 📅 2026-07-31"],
       ["#Topic", "Tag", "#Infrastructure or #IAM"],
       ["s::o / s::d", "Inline status", "d:: [[John Doe]] Approve the proposal. #Infrastructure s::o"],
+      ["[due:: ]", "Due date", "e:: Confirm FY27 funding with [[John Doe]]. [due:: 2026-08-28]"],
       ["done::", "Completion date", "~~d:: [[John Doe]] Approve the proposal. s::d done::2026-07-18~~"],
       ["~~text~~", "Completed-record formatting", "~~d:: Decision approved. s::d done::2026-07-18~~"]
     ];
@@ -1657,6 +1681,7 @@ class ACE2XKnowledgeOSSettingTab extends PluginSettingTab {
     notes.createEl("p", { text: "Only links resolving to a person page are synchronized to People pages. A person page is recognized by its location in the People folder or by type: person in frontmatter." });
     notes.createEl("p", { text: "Use s:: inline at the end of a record. Write s::o for Open and s::d for Done. The aliases s::c, done, closed, and complete are accepted and normalized. Base status edits synchronize back to the compact inline value." });
     notes.createEl("p", { text: "When a record becomes Done, synchronization applies strikethrough and adds done:: YYYY-MM-DD. Reopening removes both the strikethrough and completion date." });
+    notes.createEl("p", { text: "On a line starting with d:: r:: i:: e:: or a::, typing [ offers a due:: suggestion. Selecting it opens a date picker and inserts [due:: YYYY-MM-DD]. The due date is parsed out of the sentence, synced to the record note's due field, and shown as a column in the dashboard Base. Removing it from the source line clears it on the next sync." });
     notes.createEl("p", { text: "Editing, changing status, removing a person, or deleting a record updates every associated person page the next time the source note is synced." });
   }
 }
